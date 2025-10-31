@@ -3,6 +3,9 @@ from abc import ABC, abstractmethod
 # 这个是pytho内置模块abc，用来创建 抽象类和抽象方法,abstractmethod,用来标记子类必须实现的方法，子类如果没有实现这些方法，也不能实例化
 from typing import Any, Dict, Optional, Tuple
 import numpy as np
+import torch
+from mpmath.libmp import dps_to_prec
+
 
 # 这个就是抽象模板类几何
 
@@ -18,41 +21,7 @@ class Robot(ABC):
         base_position (np.ndarray): Position of the base of the robot as (x, y, z).
     """
 
-    def __init__(
-        self,
-        sim,
-        body_name: str,
-        file_name: str,
-        base_position: np.ndarray,
-        action_dim: int,
-        joint_indices: np.ndarray,
-        joint_forces: np.ndarray,
-    ) -> None:
-        self.sim = sim
-        self.body_name = body_name
-        with self.sim.no_rendering():
-            self._load_robot(file_name, base_position)
-            self._callback_afterload()
-        self.action_dim = action_dim
-        self.joint_indices = joint_indices
-        self.joint_forces = joint_forces
-
-    def _load_robot(self, file_name: str, base_position: np.ndarray) -> None:
-        """Load the robot.
-
-        Args:
-            file_name (str): The URDF file name of the robot.
-            base_position (np.ndarray): The position of the robot, as (x, y, z).
-        """
-        self.sim.loadURDF(
-            body_name=self.body_name,
-            fileName=file_name,
-            basePosition=base_position,
-            useFixedBase=True,
-        )
-
-    def _callback_afterload(self) -> None:
-        """Called after robot loading."""
+    def __init__(self):
         pass
 
     # 将神经网络输出 转换成物理仿真引擎能理解的控制命令
@@ -137,84 +106,97 @@ class RobotTaskEnv():
         render_roll (int, optional): Roll of the camera. Defaults to 0.
     """
 
-    metadata = {"render_modes": ["human", "rgb_array"]}
-
     def __init__(
         self,
         robot: Robot,
         task: Task,
-        # render_width: int = 720,
-        # render_height: int = 480,
-        # render_target_position: Optional[np.ndarray] = None,
-        # render_distance: float = 1.4,
-        # render_yaw: float = 45,
-        # render_pitch: float = -30,
-        # render_roll: float = 0,
+        cfg
+
     ) -> None:
 
-        # 渲染逻辑，看到底应该如何渲染。
         assert robot.sim == task.sim, "The robot and the task must belong to the same simulation."
         self.sim = robot.sim
         # self.render_mode = self.sim.render_mode
         # self.metadata["render_fps"] = 1 / self.sim.dt
         self.robot = robot
         self.task = task
+        self.device=cfg.device
+
+
+        self.num_envs=cfg.num_envs
 
 
         observation, _ = self.reset()  # required for init; seed can be changed later
-        observation_shape = observation["observation"].shape
-        achieved_goal_shape = observation["achieved_goal"].shape
-        desired_goal_shape = observation["desired_goal"].shape
-        self.observation_space = dict(
-            observation=np.random.uniform(-10.0, 10.0, size=observation_shape).astype(np.float32),
-            desired_goal=np.random.uniform(-10.0, 10.0, size=desired_goal_shape).astype(np.float32),
-            achieved_goal=np.random.uniform(-10.0, 10.0, size=achieved_goal_shape).astype(np.float32),
-        )
-        self.action_dim = self.robot.action_dim
+        # 后面这个地方要改为,后面这个地方前面是环境的信息。
+        self.num_obs = observation["observation"].shape
+        self.num_privileged_obs=None    # 后续更新
+
+        self.num_achieved_goal = observation["achieved_goal"].shape
+        self.num_desired_goal = observation["desired_goal"].shape
+        self.num_actions=self.robot.action_dim
+        self.max_episode_length=cfg.max_episode_length
+
+        # allocate buffers
+        self.obs_buf=torch.zeros(self.num_envs,self.num_obs,device=self.device,dtype=torch.float)
+        self.achieved_goal_buf=torch.zeros(self.num_envs,self.num_achieved_goal,device=self.device,dtype=torch.float)
+        self.desired_goal_buf=torch.zeros(self.num_envs,self.num_desired_goal,device=self.device,dtype=torch.float)
+
+
+        self.rew_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
+        self.reset_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.long)
+        self.episode_length_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
+        self.time_out_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
+        if self.num_privileged_obs is not None:
+            self.privileged_obs_buf = torch.zeros(self.num_envs, self.num_privileged_obs, device=self.device,dtype=torch.float)
+        else:
+            self.privileged_obs_buf = None
+            # self.num_privileged_obs = self.num_obs
+
+        self.extras = {}
         self.compute_reward = self.task.compute_reward
-        self._saved_goal = dict()  # For state saving and restoring
-
-        # self.render_width = render_width
-        # self.render_height = render_height
-        # self.render_target_position = (
-        #     render_target_position if render_target_position is not None else np.array([0.0, 0.0, 0.0])
-        # )
-        # self.render_distance = render_distance
-        # self.render_yaw = render_yaw
-        # self.render_pitch = render_pitch
-        # self.render_roll = render_roll
-        # with self.sim.no_rendering():
-        #     self.sim.place_visualizer(
-        #         target_position=self.render_target_position,
-        #         distance=self.render_distance,
-        #         yaw=self.render_yaw,
-        #         pitch=self.render_pitch,
-        #     )
-
-    def _get_obs(self) -> Dict[str, np.ndarray]:
-        robot_obs = self.robot.get_obs().astype(np.float32)  # robot state
-        task_obs = self.task.get_obs().astype(np.float32)  # object position, velocity, etc...
-        observation = np.concatenate([robot_obs, task_obs])
-        achieved_goal = self.task.get_achieved_goal().astype(np.float32)
-        return {
-            "observation": observation,
-            "achieved_goal": achieved_goal,
-            "desired_goal": self.task.get_goal().astype(np.float32),
-        }
 
 
-    def reset(
-        self, seed: Optional[int] = None, options: Optional[dict] = None
-    ) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
+    def get_obs(self):
+        return self.obs_buf
 
-        # self.task.np_random = self.np_random
-        # with self.sim.no_rendering():
-        self.robot.reset()
-        self.task.reset()
+    def get_achieved_goal_obs(self):
+        return self.achieved_goal_buf
 
-        observation = self._get_obs()
-        info = {"is_success": self.task.is_success(observation["achieved_goal"], self.task.get_goal())}
-        return observation, info
+    def get_desired_goal_obs(self):
+        return self.desired_goal_buf
+
+    #重置特定的环境
+    def reset_idx(self,env_ids):
+        if len(env_ids) == 0:
+            return
+
+        self.robot.reset_ids(env_ids)
+        self.task.reset_ids(env_ids)
+
+        #重置buffer的变量
+        self.rew_buf[env_ids]=0.
+        self.episode_length_buf[env_ids]=0.
+        self.time_out_buf[env_ids]=0.
+        self.reset_buf[env_ids]=1.
+
+        # fill extras
+        # self.extras["episode"] = {}
+        # for key in self.episode_sums.keys():
+        #     self.extras["episode"]['rew_' + key] = torch.mean(
+        #         self.episode_sums[key][env_ids]) / self.max_episode_length_s
+        #     self.episode_sums[key][env_ids] = 0.
+        # if self.cfg.commands.curriculum:
+        #     self.extras["episode"]["max_command_x"] = self.command_ranges["lin_vel_x"][1]
+        # # send timeout info to the algorithm
+        # if self.cfg.env.send_timeouts:
+        #     self.extras["time_outs"] = self.time_out_buf
+
+    def reset(self):
+
+        self.reset_idx(torch.arange(self.num_envs, device=self.device))
+
+        obs, privileged_obs, _, _, _ = self.step(torch.zeros(self.num_envs, self.num_actions, device=self.device, requires_grad=False))
+        return obs, privileged_obs
 
 
     def step(self, action: np.ndarray) -> Tuple[Dict[str, np.ndarray], float, bool, bool, Dict[str, Any]]:
@@ -222,7 +204,7 @@ class RobotTaskEnv():
 
         self.sim.step()
 
-        observation = self._get_obs()
+        observation = self.get_obs()
         # An episode is terminated iff the agent has reached the target
         terminated = bool(self.task.is_success(observation["achieved_goal"], self.task.get_goal()))
         truncated = False

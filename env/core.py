@@ -4,10 +4,6 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional, Tuple
 import numpy as np
 import torch
-from mpmath.libmp import dps_to_prec
-
-
-# 这个就是抽象模板类几何
 
 
 
@@ -110,7 +106,7 @@ class RobotTaskEnv():
         self.num_envs=cfg.num_envs
 
 
-        observation,obs, privileged_obs,achieved_goal,desired_goal,_,_,_ = self.reset()  # required for init; seed can be changed later
+        observation,privileged_obs,achieved_goal,desired_goal,_,_,_ = self.reset()  # required for init; seed can be changed later
         # 后面这个地方要改为,后面这个地方前面是环境的信息。
         self.num_obs = observation["observation"].shape[1]
         self.num_privileged_obs=None    # 后续更新
@@ -119,7 +115,7 @@ class RobotTaskEnv():
         self.num_desired_goal = observation["desired_goal"].shape[1]
 
 
-        self.num_actions=self.robot.action_dim
+        self.num_actions=self.robot.num_actions
         self.max_episode_length=cfg.max_episode_length
 
         # allocate buffers
@@ -138,7 +134,6 @@ class RobotTaskEnv():
             # self.num_privileged_obs = self.num_obs
 
         self.compute_reward_task=task.compute_reward
-
         self.extras = {}
 
 
@@ -163,10 +158,16 @@ class RobotTaskEnv():
         self.rew_buf[env_ids]=0.
         self.episode_length_buf[env_ids]=0.
         self.time_out_buf[env_ids]=0.
-        self.reset_buf[env_ids]=1.
+        self.reset_buf[env_ids]=0.
 
-        # fill extras
-        # self.extras["episode"] = {}
+        #fill extras
+        self.extras["episode"] = {}
+
+        self.extras["episode"]["goal_reward"]=torch.mean(self.rew_buf[env_ids])/self.cfg.max_episode_length_s
+        # send timeout info to the algorithm
+        self.extras["time_outs"]=self.time_out_buf
+
+        #后续补充这些的
         # for key in self.episode_sums.keys():
         #     self.extras["episode"]['rew_' + key] = torch.mean(
         #         self.episode_sums[key][env_ids]) / self.max_episode_length_s
@@ -178,28 +179,25 @@ class RobotTaskEnv():
         #     self.extras["time_outs"] = self.time_out_buf
 
     def reset(self):
-
         self.reset_idx(torch.arange(self.num_envs, device=self.device))
-
         #重置的另一种写法，按照初始的状态来,还有一点就是，应该还有各种的 achieved_goal,还有对应的goal
-
         obs, privileged_obs,achieved_goal,desired_goal, _, _, _ = self.step(torch.zeros(self.num_envs, self.num_actions, device=self.device, requires_grad=False))
 
-        return obs, privileged_obs
+        return obs, privileged_obs,achieved_goal,desired_goal,_,_,_
 
 
-    def step(self, action: np.ndarray) -> Tuple[Dict[str, np.ndarray], float, bool, bool, Dict[str, Any]]:
+    def step(self, action: np.ndarray)
         #修改为 多环境的，dones,还有extras，对应就是内部的信息。
         action_sim=self.robot.set_action(action)
 
         # 这个地方设置 control.decimation。
         for _ in range(self.cfg.control.decimation):
-            self.sim.step(action_sim)         # 这个地方一定要refesh，就是要更新数值，后面调研的一定是更新之后的。
+            self.sim.step(action_sim)         # 这个地方一定要refesh，就是要更新数值，后面读取的一定是更新之后的。
 
-        # 更新缓冲区域
+        # 更新的问题！！！！，这个更新放到仿真环境里面，就是robot的接口一定要是完全合适的。
         self.post_physics_step()
 
-        return self.obs_buf, self.privileged_obs_buf, self.rew_buf, self.reset_buf, self.extras
+        return self.obs_buf, self.privileged_obs_buf, self.achieved_goal_buf,self.desired_goal_buf,self.rew_buf, self.reset_buf, self.extras
 
     def post_physics_step(self):
 
@@ -207,9 +205,9 @@ class RobotTaskEnv():
         self.episode_length_buf += 1
         self.check_termination()
 
-        # 顺序上的问题A
+        # 顺序上的问题,注意一下
+        self.update_observations()
         self.compute_reward()
-        self.compute_observations()
 
         env_ids = self.reset_buf.nonzero(as_tuple=False).flatten()
         self.reset_idx(env_ids)
@@ -222,6 +220,8 @@ class RobotTaskEnv():
         #self.reset_buf = torch.any(torch.norm(self.contact_forces[:, self.termination_contact_indices, :], dim=-1) > 1., dim=1)
         #self.reset_buf |= torch.logical_or(torch.abs(self.rpy[:,1])>1.0, torch.abs(self.rpy[:,0])>0.8)
         # 这个地方的仿真接口，就是 reset_buf的判断条件.
+
+        #这个地方也不进行一个更新，判断条件后面再说，根据任务后续设定
 
         self.time_out_buf = self.episode_length_buf > self.max_episode_length # no terminal reward for time-outs
         self.reset_buf |= self.time_out_buf
@@ -241,7 +241,8 @@ class RobotTaskEnv():
         #     self.rew_buf[:] = torch.clip(self.rew_buf[:], min=0.)
         # add termination reward after clipping
 
-        # 维护各个奖励的reward_scalse这个具体的操作还有后续还要处理
+
+        # 维护各个奖励的reward_scalse这个具体的操作还有后续还要处理，然后termination感觉重复计算了
         # if "termination" in self.reward_scales:
         #     rew = self._reward_termination() * self.reward_scales["termination"]
         #     self.rew_buf += rew
@@ -252,12 +253,11 @@ class RobotTaskEnv():
         return self.reset_buf * ~self.time_out_buf
 
 
-    def compute_observations(self):
+    def update_observations(self):
         # 更新对应
         self.obs_buf=self.robot.get_obs()
         self.desired_goal_buf=self.task.get_goal()
         self.achieved_goal_buf=self.task.get_achieved_goal()
-
 
     def close(self) -> None:
         self.sim.close()

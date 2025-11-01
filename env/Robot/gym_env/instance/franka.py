@@ -7,8 +7,8 @@ from ..sim import Gym
 class Franka(Robot):
     def __init__(self,sim:Gym ,cfg):
         # 那么这个地方按照sim，就是以文档里面的 官方文档的prepare_sim为界限
-        self.action_dim=cfg.action_dim
-        self.obs_dim=cfg.obs_dim
+        self.num_actions=cfg.num_actions
+        self.num_obs=cfg.num_obs
         self.num_envs=cfg.num_envs
         self.sim=sim
         self.cfg=cfg
@@ -34,7 +34,7 @@ class Franka(Robot):
             target_fingers_width = fingers_width + fingers_ctrl
 
         target_angles = np.concatenate((target_arm_angles, [target_fingers_width / 2, target_fingers_width / 2]))
-        self.sim.control_joints(target_angles=target_angles)
+        return target_angles
 
 
     def get_obs(self) -> np.ndarray:

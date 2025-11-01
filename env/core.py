@@ -91,20 +91,6 @@ class Task(ABC):
 
 
 class RobotTaskEnv():
-    """Robotic task goal env, as the junction of a task and a robot.
-
-    Args:
-        robot (Robot): The robot.
-        task (Task): The task.
-        render_width (int, optional): Image width. Defaults to 720.
-        render_height (int, optional): Image height. Defaults to 480.
-        render_target_position (np.ndarray, optional): Camera targeting this position, as (x, y, z).
-            Defaults to [0., 0., 0.].
-        render_distance (float, optional): Distance of the camera. Defaults to 1.4.
-        render_yaw (float, optional): Yaw of the camera. Defaults to 45.
-        render_pitch (float, optional): Pitch of the camera. Defaults to -30.
-        render_roll (int, optional): Roll of the camera. Defaults to 0.
-    """
 
     def __init__(
         self,
@@ -121,18 +107,18 @@ class RobotTaskEnv():
         self.robot = robot
         self.task = task
         self.device=cfg.device
-
-
         self.num_envs=cfg.num_envs
 
 
-        observation, _ = self.reset()  # required for init; seed can be changed later
+        observation,obs, privileged_obs,achieved_goal,desired_goal,_,_,_ = self.reset()  # required for init; seed can be changed later
         # 后面这个地方要改为,后面这个地方前面是环境的信息。
-        self.num_obs = observation["observation"].shape
+        self.num_obs = observation["observation"].shape[1]
         self.num_privileged_obs=None    # 后续更新
 
-        self.num_achieved_goal = observation["achieved_goal"].shape
-        self.num_desired_goal = observation["desired_goal"].shape
+        self.num_achieved_goal = observation["achieved_goal"].shape[1]
+        self.num_desired_goal = observation["desired_goal"].shape[1]
+
+
         self.num_actions=self.robot.action_dim
         self.max_episode_length=cfg.max_episode_length
 
@@ -140,7 +126,6 @@ class RobotTaskEnv():
         self.obs_buf=torch.zeros(self.num_envs,self.num_obs,device=self.device,dtype=torch.float)
         self.achieved_goal_buf=torch.zeros(self.num_envs,self.num_achieved_goal,device=self.device,dtype=torch.float)
         self.desired_goal_buf=torch.zeros(self.num_envs,self.num_desired_goal,device=self.device,dtype=torch.float)
-
 
         self.rew_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
         self.reset_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.long)
@@ -152,8 +137,9 @@ class RobotTaskEnv():
             self.privileged_obs_buf = None
             # self.num_privileged_obs = self.num_obs
 
+        self.compute_reward_task=task.compute_reward
+
         self.extras = {}
-        self.compute_reward = self.task.compute_reward
 
 
     def get_obs(self):
@@ -195,22 +181,76 @@ class RobotTaskEnv():
 
         self.reset_idx(torch.arange(self.num_envs, device=self.device))
 
-        obs, privileged_obs, _, _, _ = self.step(torch.zeros(self.num_envs, self.num_actions, device=self.device, requires_grad=False))
+        #重置的另一种写法，按照初始的状态来,还有一点就是，应该还有各种的 achieved_goal,还有对应的goal
+
+        obs, privileged_obs,achieved_goal,desired_goal, _, _, _ = self.step(torch.zeros(self.num_envs, self.num_actions, device=self.device, requires_grad=False))
+
         return obs, privileged_obs
 
 
     def step(self, action: np.ndarray) -> Tuple[Dict[str, np.ndarray], float, bool, bool, Dict[str, Any]]:
-        self.robot.set_action(action)
+        #修改为 多环境的，dones,还有extras，对应就是内部的信息。
+        action_sim=self.robot.set_action(action)
 
-        self.sim.step()
+        # 这个地方设置 control.decimation。
+        for _ in range(self.cfg.control.decimation):
+            self.sim.step(action_sim)         # 这个地方一定要refesh，就是要更新数值，后面调研的一定是更新之后的。
 
-        observation = self.get_obs()
-        # An episode is terminated iff the agent has reached the target
-        terminated = bool(self.task.is_success(observation["achieved_goal"], self.task.get_goal()))
-        truncated = False
-        info = {"is_success": terminated}
-        reward = float(self.task.compute_reward(observation["achieved_goal"], self.task.get_goal(), info))
-        return observation, reward, terminated, truncated, info
+        # 更新缓冲区域
+        self.post_physics_step()
+
+        return self.obs_buf, self.privileged_obs_buf, self.rew_buf, self.reset_buf, self.extras
+
+    def post_physics_step(self):
+
+        #更新buf的数值。
+        self.episode_length_buf += 1
+        self.check_termination()
+        self.compute_reward()
+        self.compute_observations()
+
+        env_ids = self.reset_buf.nonzero(as_tuple=False).flatten()
+        self.reset_idx(env_ids)
+
+    # 更新对应buffer数值。
+
+    def check_termination(self):
+        """ Check if environments need to be reset
+        """
+        #self.reset_buf = torch.any(torch.norm(self.contact_forces[:, self.termination_contact_indices, :], dim=-1) > 1., dim=1)
+        #self.reset_buf |= torch.logical_or(torch.abs(self.rpy[:,1])>1.0, torch.abs(self.rpy[:,0])>0.8)
+        # 这个地方的仿真接口，就是 reset_buf的判断条件.
+
+        self.time_out_buf = self.episode_length_buf > self.max_episode_length # no terminal reward for time-outs
+        self.reset_buf |= self.time_out_buf
+
+    def compute_reward(self):
+        """ Compute rewards
+            Calls each reward function which had a non-zero scale (processed in self._prepare_reward_function())
+            adds each terms to the episode sums and to the total reward
+        """
+        self.rew_buf[:] = 0.
+        for i in range(len(self.reward_functions)):
+            name = self.reward_names[i]
+            rew = self.reward_functions[i]() * self.reward_scales[name]
+            self.rew_buf += rew
+            self.episode_sums[name] += rew
+
+        # 设置 是否只有正确奖励A
+        # if self.cfg.rewards.only_positive_rewards:
+        #     self.rew_buf[:] = torch.clip(self.rew_buf[:], min=0.)
+        # add termination reward after clipping
+
+
+        if "termination" in self.reward_scales:
+            rew = self._reward_termination() * self.reward_scales["termination"]
+            self.rew_buf += rew
+            self.episode_sums["termination"] += rew
+
+    def compute_observations(self):
+        # 根据buf 来计算对应的奖励
+
+
 
     def close(self) -> None:
         self.sim.close()

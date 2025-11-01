@@ -26,6 +26,9 @@ class FrankaReachGym(RobotTaskEnv):
         sim=Gym(cfg.gymcfg)
         robot=Franka(sim,cfg.robotcfg)
         task=Reach(sim,cfg.taskcfg)
+
+        # init_buffer, 可能是需要存放一下其它的机器人信息，从仿真环境当中获取的。
+
         super().__init__(
             robot,
             task,

@@ -206,6 +206,8 @@ class RobotTaskEnv():
         #更新buf的数值。
         self.episode_length_buf += 1
         self.check_termination()
+
+        # 顺序上的问题A
         self.compute_reward()
         self.compute_observations()
 
@@ -230,45 +232,32 @@ class RobotTaskEnv():
             adds each terms to the episode sums and to the total reward
         """
         self.rew_buf[:] = 0.
-        for i in range(len(self.reward_functions)):
-            name = self.reward_names[i]
-            rew = self.reward_functions[i]() * self.reward_scales[name]
-            self.rew_buf += rew
-            self.episode_sums[name] += rew
+        self.rew_buf=self.compute_reward_task(self.achieved_goal_buf,self.desired_goal_buf)
 
+        # 目前奖励只有一个，后面可是使用,就是记录每一个的
+        #self.episode_sums[name] += rew
         # 设置 是否只有正确奖励A
         # if self.cfg.rewards.only_positive_rewards:
         #     self.rew_buf[:] = torch.clip(self.rew_buf[:], min=0.)
         # add termination reward after clipping
 
+        # 维护各个奖励的reward_scalse这个具体的操作还有后续还要处理
+        # if "termination" in self.reward_scales:
+        #     rew = self._reward_termination() * self.reward_scales["termination"]
+        #     self.rew_buf += rew
+        #     self.episode_sums["termination"] += rew
 
-        if "termination" in self.reward_scales:
-            rew = self._reward_termination() * self.reward_scales["termination"]
-            self.rew_buf += rew
-            self.episode_sums["termination"] += rew
+    def _reward_termination(self):
+        # Terminal reward / penalty
+        return self.reset_buf * ~self.time_out_buf
+
 
     def compute_observations(self):
-        # 根据buf 来计算对应的奖励
-
+        # 更新对应
+        self.obs_buf=self.robot.get_obs()
+        self.desired_goal_buf=self.task.get_goal()
+        self.achieved_goal_buf=self.task.get_achieved_goal()
 
 
     def close(self) -> None:
         self.sim.close()
-
-    # def render(self) -> Optional[np.ndarray]:
-    #     """Render.
-    #
-    #     If render mode is "rgb_array", return an RGB array of the scene. Else, do nothing and return None.
-    #
-    #     Returns:
-    #         RGB np.ndarray or None: An RGB array if mode is 'rgb_array', else None.
-    #     """
-    #     return self.sim.render(
-    #         width=self.render_width,
-    #         height=self.render_height,
-    #         target_position=self.render_target_position,
-    #         distance=self.render_distance,
-    #         yaw=self.render_yaw,
-    #         pitch=self.render_pitch,
-    #         roll=self.render_roll,
-    #     )

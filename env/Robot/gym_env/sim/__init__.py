@@ -1,2 +1,2 @@
-from pygym import Gym
+from .pygym import Gym
 

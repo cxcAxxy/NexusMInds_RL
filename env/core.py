@@ -186,7 +186,7 @@ class RobotTaskEnv():
         return obs, privileged_obs,achieved_goal,desired_goal,_,_,_
 
 
-    def step(self, action: np.ndarray)
+    def step(self, action: np.ndarray):
         #修改为 多环境的，dones,还有extras，对应就是内部的信息。
         action_sim=self.robot.set_action(action)
 

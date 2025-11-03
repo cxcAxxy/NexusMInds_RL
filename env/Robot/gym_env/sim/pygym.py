@@ -1,62 +1,349 @@
+import random
+import time
 
 import numpy as np
+
 # gym应该要实现的接口
+from isaacgym import gymapi, gymutil
+from isaacgym.torch_utils import *
+from isaacgym import gymtorch
+import math
 
+import torch
+#后期，配置文件的参数，仿真的一些可视化参数。
+from ...utils import *
+
+# 这个args是需要从命令行当中进行一个读取，使用isaac gym的命令行读取
 class Gym():
-    def __init__(self):
+    def __init__(self,args):
+        self.args=args
+        self.num_envs=args.num_envs
+
+        self.control_type=args.control_type
+        self.gym=gymapi.acquire_gym()
+
+        # 配置物理仿真参数
+        self.sim_params = gymapi.SimParams()
+        self.sim_params.up_axis = gymapi.UP_AXIS_Z
+        self.sim_params.gravity = gymapi.Vec3(0.0, 0.0, -9.8)
+        self.sim_params.dt = 1.0 / 60.0
+        self.sim_params.substeps = 2
+        self.sim_params.use_gpu_pipeline = args.use_gpu_pipeline
+        if args.physics_engine == gymapi.SIM_PHYSX:
+            self.sim_params.physx.solver_type = 1
+            self.sim_params.physx.num_position_iterations = 4
+            self.sim_params.physx.num_velocity_iterations = 1
+            self.sim_params.physx.num_threads = args.num_threads
+            self.sim_params.physx.use_gpu = args.use_gpu
+        else:
+            raise Exception("This example can only be used with PhysX")
+
+        # create sim
+        self.sim = self.gym.create_sim(args.compute_device_id, args.graphics_device_id, args.physics_engine,
+                                       self.sim_params)
+        if self.sim is None:
+            raise Exception("Failed to create sim")
+
+        # create viewer
 
 
-    def pre_simulate(self,asset,robot_files,base_poses,base_ornes,num_envs):
+        if self.args.headless == False:
+            self.viewer = self.gym.create_viewer(self.sim, gymapi.CameraProperties())
+            if self.viewer is None:
+                raise Exception("Failed to create viewer")
 
-        #这个地方设置neutral_joint_values，可以通过urdf或者是xml的关节角的限制确定，也可以通过外部的cfg设置得到
-        self.neutral_joint_values = np.array([0.00, 0.41, 0.00, -1.85, 0.00, 2.26, 0.79, 0.00, 0.00])
-
-        # 设置摩擦等，基本的物理参数在这个地方，在导入actor的时候，要加入这个！
-
-    def get_fingers_width(self):
-        # 注意加入判断，是否有夹爪或者是灵巧手
-
-
-    def control_joints(self,target_angles):
-        # 给定目标关节角，使用pd去控制
-
-    def get_ee_velocity(self):
-        # 获得末端执行器的速度
+    def create_robot_asset(self,urdf_file,asset_root):
+        # 创建模板
+        asset_options = gymapi.AssetOptions()
+        asset_options.fix_base_link = True
+        asset_options.flip_visual_attachments = True
+        asset_options.armature = 0.01
+        asset_options.disable_gravity = True
+        print("Loading asset '%s' from '%s'" % (urdf_file, asset_root))
+        self.robot_asset = self.gym.load_asset(self.sim, asset_root, urdf_file, asset_options)
 
 
+    #后面接入参数，设置pd参数等等
+    def set_dof_states_and_propeties(self):
+
+        # set default DOF states
+        self.default_dof_state = np.zeros(self.robot_num_dofs, gymapi.DofState.dtype)
+        self.default_dof_state["pos"][:7] = self.robot_mids[:7]
+
+        # set DOF control properties (except grippers)
+        self.robot_dof_props["driveMode"][:7].fill(gymapi.DOF_MODE_EFFORT)
+        self.robot_dof_props["stiffness"][:7].fill(0.0)
+        self.robot_dof_props["damping"][:7].fill(0.0)
+
+        # set DOF control properties for grippers
+        self.robot_dof_props["driveMode"][7:].fill(gymapi.DOF_MODE_POS)
+        self.robot_dof_props["stiffness"][7:].fill(800.0)
+        self.robot_dof_props["damping"][7:].fill(40.0)
+
+
+    def create_envs_and_actors(self,num_envs,base_pos,base_orn):
+        # 首先是根据 base_pos和base_orn创建对应的 gyapi.Transform()
+        pose=gymapi.Transform()
+        pose.p =gymapi.Vec3(base_pos[0],base_pos[1],base_pos[2])
+        pose.r=gymapi.Quat(base_orn[0],base_orn[1],base_orn[2],base_orn[3])
+        
+        self.envs=[]
+        #全局的，注意这个地方
+        self.ee_idxs=[]
+        self.init_pos_list=[]
+        self.init_orn_list=[]
+        
+        # 环境对应的参数系数
+        self.num_per_row = int(math.sqrt(self.num_envs))
+        spacing = 1.0
+        env_lower = gymapi.Vec3(-spacing, -spacing, 0.0)
+        env_upper = gymapi.Vec3(spacing, spacing, spacing)
+
+        for i in range(num_envs):
+            # Create env
+            env = self.gym.create_env(self.sim, env_lower, env_upper, self.num_per_row)
+            self.envs.append(env)
+
+            # Add franka
+            robot_handle = self.gym.create_actor(env, self.robot_asset, pose, "franka", i, 1)
+
+            # Set initial DOF states
+            self.gym.set_actor_dof_states(env, robot_handle, self.default_dof_state, gymapi.STATE_ALL)
+
+            # Set DOF control properties
+            self.gym.set_actor_dof_properties(env, robot_handle, self.robot_dof_props)
+
+            # Get inital ee pose
+            ee_handle = self.gym.find_actor_rigid_body_handle(env, robot_handle, "panda_hand")
+            ee_pose = self.gym.get_rigid_transform(env, ee_handle)
+            self.init_pos_list.append([ee_pose.p.x, ee_pose.p.y, ee_pose.p.z])
+            self.init_orn_list.append([ee_pose.r.x, ee_pose.r.y, ee_pose.r.z, ee_pose.r.w])
+
+            # Get global index of ee in rigid body state tensor
+            ee_idx = self.gym.find_actor_rigid_body_index(env, robot_handle, "panda_hand", gymapi.DOMAIN_SIM)
+
+
+            self.ee_idxs.append(ee_idx)
+
+
+    def set_camera(self):
+        # Point camera at middle env
+        cam_pos = gymapi.Vec3(4, 3, 3)
+        cam_target = gymapi.Vec3(-4, -3, 0)
+        middle_env = self.envs[self.num_envs // 2 + self.num_per_row // 2]
+        self.gym.viewer_camera_look_at(self.viewer, middle_env, cam_pos, cam_target)
+
+    def pre_simulate(self,asset_root,asset_file,base_pos,base_orn):
+
+        self.create_plane()
+        self.create_robot_asset(asset_file,asset_root)
+
+        # get joint limits and ranges for Franka
+        self.robot_dof_props = self.gym.get_asset_dof_properties(self.robot_asset)
+        robot_lower_limits = self.robot_dof_props['lower']
+        robot_upper_limits = self.robot_dof_props['upper']
+        robot_ranges = robot_upper_limits - robot_lower_limits
+        # 设置一下robot_mids,可能是用来初始化的作用，这个地方稍微记忆一下.
+        self.robot_mids = 0.5 * (robot_upper_limits + robot_lower_limits)
+        self.robot_num_dofs = len(self.robot_dof_props)
+
+        self.set_dof_states_and_propeties()
+
+        # 创建环境和设置实例
+        self.create_envs_and_actors(self.num_envs,base_pos,base_orn)
+        self.set_camera()
+
+        self.gym.prepare_sim(self.sim)
+        self.get_state_tensors()
+
+
+        # while True:
+        #     self.gym.simulate(self.sim)
+        #     self.gym.fetch_results(self.sim, True)
+        #
+        #     # Step rendering
+        #     self.gym.step_graphics(self.sim)
+        #     self.gym.draw_viewer(self.viewer, self.sim, False)
+
+
+    def get_state_tensors(self):
+
+        self._rb_states = self.gym.acquire_rigid_body_state_tensor(self.sim)
+        self.rb_states = gymtorch.wrap_tensor(self._rb_states)
+
+        self._dof_states = self.gym.acquire_dof_state_tensor(self.sim)
+        self.dof_states = gymtorch.wrap_tensor(self._dof_states)
+
+        # 拆分位置与速度分量
+        self.dof_pos = self.dof_states[:, 0].view(self.num_envs, -1, 1)
+        self.dof_vel = self.dof_states[:, 1].view(self.num_envs, -1, 1)
+
+        self._jacobian = self.gym.acquire_jacobian_tensor(self.sim, "franka")
+        self.jacobian = gymtorch.wrap_tensor(self._jacobian)
+
+        # Jacobian entries for end effector
+        self.ee_index = self.gym.get_asset_rigid_body_dict(self.robot_asset)["panda_hand"]
+
+        self.j_eef = self.jacobian[:, self.ee_index - 1, :]
+
+        # Prepare mass matrix tensor
+        self._massmatrix = self.gym.acquire_mass_matrix_tensor(self.sim, "franka")
+        self.mm = gymtorch.wrap_tensor(self._massmatrix)
+        self.refresh()
+
+    # 仿真步骤步进一次
+    def step(self,u):
+        if self.control_type == "effort" :
+            # Set tensor action
+            self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(u))
+
+        elif self.control_type == "velocity":
+            self.gym.set_dof_velocity_target_tensor(self.sim,gymtorch.unwrap_tensor(u))
+        elif self.control_type == "position":
+            self.gym.set_dof_position_target_tensor(self.sim, gymtorch.unwrap_tensor(u))
+        else :
+            raise ValueError(f"Unsupported control type: {self.control_type}. Must be one of ['effort', 'velocity', 'position'].")
+        # Step the physics
+        self.gym.simulate(self.sim)
+        self.gym.fetch_results(self.sim, True)
+        self.refresh()
+        # Step rendering
+        self.gym.step_graphics(self.sim)
+        self.gym.draw_viewer(self.viewer, self.sim, False)
+
+    def refresh(self):
+        # 看上层从底层读取了什么,那么这个地方就进行了一个什么refresh
+
+        # 末端位姿(root_state_tensor)
+        # 关节角、速度(dof_state_tensor)
+        # 接触力(net_contact_force_tensor)
+        self.gym.refresh_rigid_body_state_tensor(self.sim)
+        self.gym.refresh_dof_state_tensor(self.sim)
+        self.gym.refresh_jacobian_tensors(self.sim)
+        self.gym.refresh_mass_matrix_tensors(self.sim)
+
+
+    def ee_pos_to_torque(self,pos_des,orn_des):
+        # 由末端位置控制,由雅可比矩阵等计算出对应的力矩
+
+        kp = 5
+        kv = 2 * math.sqrt(kp)
+        # 使用 之前，先要同步一下，刚创建的时候可能数据为0或是其他的，先更新一下
+        self.refresh()
+
+        pos_cur = self.rb_states[self.ee_idxs, :3]
+        orn_cur = self.rb_states[self.ee_idxs, 3:7]
+        print("pos_cur")
+        print(pos_cur)
+
+        print("orn_cur")
+        print(orn_cur)
+
+        # Solve for control (Operational Space Control)
+        m_inv = torch.inverse(self.mm)
+        m_eef = torch.inverse(self.j_eef @ m_inv @ torch.transpose(self.j_eef, 1, 2))
+        orn_cur /= torch.norm(orn_cur, dim=-1).unsqueeze(-1)
+        orn_err = orientation_error(orn_des, orn_cur)
+
+        pos_err = kp * (pos_des - pos_cur)
+
+        dpose = torch.cat([pos_err, orn_err], -1)
+
+        u = torch.transpose(self.j_eef, 1, 2) @ m_eef @ (kp * dpose).unsqueeze(-1) - kv * self.mm @ self.dof_vel
+
+        print(u.shape)
+        return  u
+
+    # ✅ 末端执行器位置
     def get_ee_position(self):
-        # 末端执行器
 
-    def inverse_kinematics(link, position, orientation)
-        # 逆运动学
+        print("-------------")
 
-    def get_joint_angle(self,joint_index):
-        # 获得index的joint的数值
+        # 打印所有的
+        print("rb_states")
+        print(self.rb_states)
 
-    def set_joint_neutral(self):
-        # 设置初始的关节角的
-        self.set_joint_angles(self.neutral_joint_values)
+        print(self.ee_idxs)
+        ee_pos = self.rb_states[self.ee_idxs, :3]
+        return ee_pos
 
+    # ✅ 末端执行器旋转（四元数）
+    def get_ee_orientation(self):
+        ee_orn = self.rb_states[self.ee_idxs, 3:7]  # 四元数 (x, y, z, w)
+        return ee_orn
+
+    # ✅ 末端执行器速度
+    def get_ee_velocity(self):
+        ee_vel = self.rb_states[self.ee_idxs, 7:10]
+        return ee_vel
+
+    # ✅ 末端执行器角速度
+    def get_ee_angular_velocity(self):
+        ee_ang_vel = self.rb_states[self.ee_idxs, 10:13]  # ωx, ωy, ωz
+        return ee_ang_vel
+
+    # ✅ 手指开合宽度（如果有夹爪）
+    def get_fingers_width(self):
+        # 举例: panda_finger_joint1 和 panda_finger_joint2
+        left = self.dof_pos[:, 7, 0]
+        right = self.dof_pos[:, 8, 0]
+        width = left + right
+        return width
+
+    # ✅ 获取单个关节角
+
+    # acotor类型
+    def get_joint_angle(self, joint_index):
+        return self.dof_pos[:, joint_index, 0]
+
+    # ✅ 获取所有关节角
     def get_joint_angles(self):
-        # 获得所有的关节角数值
+        return self.dof_pos.squeeze(-1)
 
-    def set_joint_angles(self,target_joints):
-        # 强制设置关节角的数值
+    # ✅ 获取单个关节速度
+    def get_joint_velocity(self, joint_index):
+        return self.dof_vel[:, joint_index, 0]
 
-    def set_base_pose(name, pos,orn):
-        # 根据名字（这个很重要） 设置
+    # ✅ 获取所有关节速度
+    def get_joint_velocities(self):
+        return self.dof_vel.squeeze(-1)
 
+    # ✅ 设置关节角度
+    def set_joint_angles(self, target_joints):
+        target = torch.tensor(target_joints, dtype=torch.float32, device=self.dof_pos.device)
+        self.gym.set_dof_position_tensor(self.sim, gymtorch.unwrap_tensor(target))
 
-    # 后面这些创建地板，还有其它的球体等，等参数根据mujuco或者gym的api自己增加，符合函数的要求即可
+    def set_joint_neutral(self,target_joint):
+        if target_joint != None:
+            self.set_joint_angles(target_joint)
+        else:
+            self.set_joint_angles(self.robot_mids)
+
+    # ✅ 设置底座位姿
+    def set_actor_pose(self, name, pos, orn):
+        transform = gymapi.Transform()
+        transform.p = gymapi.Vec3(pos[0], pos[1], pos[2])
+        transform.r = gymapi.Quat(orn[0], orn[1], orn[2], orn[3])
+        for i in range(self.num_envs):
+            actor_eele = self.gym.find_actor_eele(self.envs[i], name)
+            self.gym.set_actor_transform(self.envs[i], actor_eele, transform)
+
     def create_plane(self):
+        plane_params = gymapi.PlaneParams()
+        plane_params.normal = gymapi.Vec3(0, 0, 1)
+        self.gym.add_ground(self.sim, plane_params)
 
     def create_box(self):
+        asset_options = gymapi.AssetOptions()
+        asset = self.gym.create_box(self.sim, 0.2, 0.2, 0.2, asset_options)
+        return asset
 
     def create_sphere(self):
+        asset_options = gymapi.AssetOptions()
+        asset = self.gym.create_sphere(self.sim, 0.1, asset_options)
+        return asset
 
     def create_table(self):
-
-
-
-
-    def step(self):
+        asset_options = gymapi.AssetOptions()
+        asset = self.gym.create_box(self.sim, 1.0, 0.6, 0.05, asset_options)
+        return asset

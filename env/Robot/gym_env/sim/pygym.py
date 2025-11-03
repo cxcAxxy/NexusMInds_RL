@@ -299,13 +299,15 @@ class Gym():
             self.set_joint_angles(self.robot_mids)
 
     # ✅ 设置底座位姿
-    def set_actor_pose(self, name, pos, orn):
+    def set_actor_pose(self, name,idx, pos, orn):
         transform = gymapi.Transform()
         transform.p = gymapi.Vec3(pos[0], pos[1], pos[2])
         transform.r = gymapi.Quat(orn[0], orn[1], orn[2], orn[3])
-        for i in range(self.num_envs):
-            actor_eele = self.gym.find_actor_eele(self.envs[i], name)
-            self.gym.set_actor_transform(self.envs[i], actor_eele, transform)
+
+
+        for i in idx:
+            actor_handle = self.gym.find_actor_handle(self.envs[i], name)
+            self.gym.set_actor_transform(self.envs[i], actor_handle, transform)
 
     def create_plane(self):
         plane_params = gymapi.PlaneParams()
@@ -317,9 +319,32 @@ class Gym():
         asset = self.gym.create_box(self.sim, 0.2, 0.2, 0.2, asset_options)
         return asset
 
-    def create_sphere(self):
+
+#   这个地方还要支持多个环境的，后面抓紧时间改
+    def create_sphere(self,body_name,radius,mass,ghost,position,orn):
+        # 设置球体资产选项
         asset_options = gymapi.AssetOptions()
-        asset = self.gym.create_sphere(self.sim, 0.1, asset_options)
+        asset_options.fix_base_link = ghost  # 如果是 ghost，可以固定
+        asset_options.density = mass / ((4 / 3) * 3.14159 * radius ** 3)  # 根据密度计算质量
+        asset_options.angular_damping = 0.01
+        asset_options.linear_damping = 0.01
+        asset_options.enable_gravity = not ghost
+
+        # 创建球体资产
+        asset = self.gym.create_sphere(self.sim, radius, asset_options)
+
+        # 创建 Transform
+        transform = gymapi.Transform()
+        transform.p = gymapi.Vec3(position[0], position[1], position[2])
+        transform.r = gymapi.Quat(orn[0], orn[1], orn[2], orn[3])
+
+        # 在 sim 中实例化 actor
+        actor_handle = self.gym.create_actor(self.sim, asset, transform, body_name,0,0)
+
+        return actor_handle
+
+
+
         return asset
 
     def create_table(self):

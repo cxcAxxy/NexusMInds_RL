@@ -1,6 +1,6 @@
 class Config:
     num_actions = 3           # 7 个关节 + 1 手指
-    num_obs = 6
+    num_obs = 4
     num_envs = 3
     control_type = "ee"
     control_type_sim = "effort"

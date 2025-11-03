@@ -6,12 +6,8 @@ from env.Robot.gym_env.instance.franka import Franka
 from configs.Robot_config import Config
 import torch
 
-asset_root="/home/cxc/Desktop/NexusMind_rl/env/assets"
-urdf_file="urdf/franka_description/robots/franka_panda.urdf"
 
 
-base_pos=torch.tensor([0,0,0])
-base_orn=torch.tensor([0,0,0,1])
 
 def test():
     args = gymutil.parse_arguments(

@@ -1,19 +1,16 @@
 import numpy as np
 
-def distance(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """Compute the distance between two array. This function is vectorized.
+import torch
 
-    Args:
-        a (np.ndarray): First array.
-        b (np.ndarray): Second array.
-
-    Returns:
-        np.ndarray: The distance between the arrays.
+def distance(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     """
-    assert a.shape == b.shape
-    dist = np.linalg.norm(a - b, axis=-1)
-    # round at 1e-6 (ensure determinism and avoid numerical noise)
-    return np.round(dist, 6)
+    Compute Euclidean distance between two tensors (supports multi-environment batch).
+    """
+    assert a.shape == b.shape, f"Shape mismatch: {a.shape} vs {b.shape}"
+
+    dist = torch.norm(a - b, dim=-1)  # 计算欧氏距离
+    dist = torch.round(dist * 1e6) / 1e6  # 保留 1e-6 精度
+    return dist
 
 
 def angle_distance(a: np.ndarray, b: np.ndarray) -> np.ndarray:

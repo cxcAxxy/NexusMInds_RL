@@ -1,2 +1,0 @@
-from .pygym import Gym
-

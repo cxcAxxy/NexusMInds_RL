@@ -17,9 +17,6 @@ from ...utils import *
 class Gym():
     def __init__(self,args):
         self.args=args
-        self.num_envs=args.num_envs
-
-        self.control_type=args.control_type
         self.gym=gymapi.acquire_gym()
 
         # 配置物理仿真参数
@@ -39,14 +36,11 @@ class Gym():
             raise Exception("This example can only be used with PhysX")
 
         # create sim
-        self.sim = self.gym.create_sim(args.compute_device_id, args.graphics_device_id, args.physics_engine,
-                                       self.sim_params)
+        self.sim = self.gym.create_sim(args.compute_device_id, args.graphics_device_id, args.physics_engine,self.sim_params)
         if self.sim is None:
             raise Exception("Failed to create sim")
 
         # create viewer
-
-
         if self.args.headless == False:
             self.viewer = self.gym.create_viewer(self.sim, gymapi.CameraProperties())
             if self.viewer is None:
@@ -86,9 +80,9 @@ class Gym():
         pose=gymapi.Transform()
         pose.p =gymapi.Vec3(base_pos[0],base_pos[1],base_pos[2])
         pose.r=gymapi.Quat(base_orn[0],base_orn[1],base_orn[2],base_orn[3])
-        
+
+        self.num_envs=num_envs
         self.envs=[]
-        #全局的，注意这个地方
         self.ee_idxs=[]
         self.init_pos_list=[]
         self.init_orn_list=[]
@@ -121,8 +115,6 @@ class Gym():
 
             # Get global index of ee in rigid body state tensor
             ee_idx = self.gym.find_actor_rigid_body_index(env, robot_handle, "panda_hand", gymapi.DOMAIN_SIM)
-
-
             self.ee_idxs.append(ee_idx)
 
 
@@ -133,8 +125,7 @@ class Gym():
         middle_env = self.envs[self.num_envs // 2 + self.num_per_row // 2]
         self.gym.viewer_camera_look_at(self.viewer, middle_env, cam_pos, cam_target)
 
-    def pre_simulate(self,asset_root,asset_file,base_pos,base_orn):
-
+    def pre_simulate(self,num_envs,asset_root,asset_file,base_pos,base_orn):
         self.create_plane()
         self.create_robot_asset(asset_file,asset_root)
 
@@ -148,11 +139,10 @@ class Gym():
         self.robot_num_dofs = len(self.robot_dof_props)
 
         self.set_dof_states_and_propeties()
-
         # 创建环境和设置实例
-        self.create_envs_and_actors(self.num_envs,base_pos,base_orn)
-        self.set_camera()
+        self.create_envs_and_actors(num_envs,base_pos,base_orn)
 
+        self.set_camera()
         self.gym.prepare_sim(self.sim)
         self.get_state_tensors()
 
@@ -183,7 +173,6 @@ class Gym():
 
         # Jacobian entries for end effector
         self.ee_index = self.gym.get_asset_rigid_body_dict(self.robot_asset)["panda_hand"]
-
         self.j_eef = self.jacobian[:, self.ee_index - 1, :]
 
         # Prepare mass matrix tensor
@@ -192,14 +181,13 @@ class Gym():
         self.refresh()
 
     # 仿真步骤步进一次
-    def step(self,u):
-        if self.control_type == "effort" :
+    def step(self,u,control_type):
+        if control_type == "effort" :
             # Set tensor action
             self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(u))
-
-        elif self.control_type == "velocity":
+        elif control_type == "velocity":
             self.gym.set_dof_velocity_target_tensor(self.sim,gymtorch.unwrap_tensor(u))
-        elif self.control_type == "position":
+        elif control_type == "position":
             self.gym.set_dof_position_target_tensor(self.sim, gymtorch.unwrap_tensor(u))
         else :
             raise ValueError(f"Unsupported control type: {self.control_type}. Must be one of ['effort', 'velocity', 'position'].")
@@ -222,10 +210,8 @@ class Gym():
         self.gym.refresh_jacobian_tensors(self.sim)
         self.gym.refresh_mass_matrix_tensors(self.sim)
 
-
     def ee_pos_to_torque(self,pos_des,orn_des):
         # 由末端位置控制,由雅可比矩阵等计算出对应的力矩
-
         kp = 5
         kv = 2 * math.sqrt(kp)
         # 使用 之前，先要同步一下，刚创建的时候可能数据为0或是其他的，先更新一下
@@ -233,11 +219,6 @@ class Gym():
 
         pos_cur = self.rb_states[self.ee_idxs, :3]
         orn_cur = self.rb_states[self.ee_idxs, 3:7]
-        print("pos_cur")
-        print(pos_cur)
-
-        print("orn_cur")
-        print(orn_cur)
 
         # Solve for control (Operational Space Control)
         m_inv = torch.inverse(self.mm)
@@ -246,12 +227,10 @@ class Gym():
         orn_err = orientation_error(orn_des, orn_cur)
 
         pos_err = kp * (pos_des - pos_cur)
-
         dpose = torch.cat([pos_err, orn_err], -1)
 
         u = torch.transpose(self.j_eef, 1, 2) @ m_eef @ (kp * dpose).unsqueeze(-1) - kv * self.mm @ self.dof_vel
 
-        print(u.shape)
         return  u
 
     # ✅ 末端执行器位置
@@ -298,7 +277,7 @@ class Gym():
 
     # ✅ 获取所有关节角
     def get_joint_angles(self):
-        return self.dof_pos.squeeze(-1)
+        return self.dof_pos
 
     # ✅ 获取单个关节速度
     def get_joint_velocity(self, joint_index):
@@ -306,7 +285,7 @@ class Gym():
 
     # ✅ 获取所有关节速度
     def get_joint_velocities(self):
-        return self.dof_vel.squeeze(-1)
+        return self.dof_vel
 
     # ✅ 设置关节角度
     def set_joint_angles(self, target_joints):

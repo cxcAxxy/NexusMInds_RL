@@ -1,8 +1,8 @@
 import numpy as np
-from sympy.physics.units import action
 
 from ....core import Robot
-from ..sim import Gym
+from ..sim.pygym import Gym
+import torch
 
 class Franka(Robot):
     def __init__(self,sim:Gym ,cfg):
@@ -13,40 +13,38 @@ class Franka(Robot):
         self.sim=sim
         self.cfg=cfg
         #准备资产，创建环境，为后续的控制做好准备
-        self.sim.pre_simulate(cfg.asset,cfg.robot_files,cfg.base_poses,cfg.base_ornes,cfg.num_envs)
-        super.__init__()
+        self.sim.pre_simulate(cfg.num_envs,cfg.asset,cfg.robot_files,cfg.base_pose,cfg.base_orn)
 
-    def set_action(self, action: np.ndarray) -> None:
-        action = action.copy()  # ensure action don't change
-        #action = np.clip(action, self.action_space.low, self.action_space.high)
+    def step(self, action) -> None:
+        action = action.clone()  # ensure action don't change
+        action = torch.clamp(action, self.cfg.action_low, self.cfg.action_high)
         if self.cfg.control_type == "ee":
-            ee_displacement = action[:3]
-            target_arm_angles = self.ee_displacement_to_target_arm_angles(ee_displacement)
+            ee_displacement = action[:,:3]
+
+            # limit maxium change in position
+            ee_displacement = ee_displacement * 0.05  # limit maximum change in position
+
+            # 计算对应的des_pos和des_orn
+            des_pos=self.sim.get_ee_position()+ee_displacement
+            des_orn=self.sim.get_ee_orientation()
+            u=self.sim.ee_pos_to_torque(des_pos,des_orn)
+
+            for i in  range(self.cfg.control_decimation):
+                self.sim.step(u,self.cfg.control_type_sim)
+
         else:
-            arm_joint_ctrl = action[:7]
-            target_arm_angles = self.arm_joint_ctrl_to_target_arm_angles(arm_joint_ctrl)
-
-        if self.cfg.block_gripper:
-            target_fingers_width = 0
-        else:
-            fingers_ctrl = action[-1] * 0.2  # limit maximum change in position
-            fingers_width = self.sim.get_fingers_width()
-            target_fingers_width = fingers_width + fingers_ctrl
-
-        target_angles = np.concatenate((target_arm_angles, [target_fingers_width / 2, target_fingers_width / 2]))
-        return target_angles
-
+            raise Exception("需要更新其他的控制方式")
 
     def get_obs(self) -> np.ndarray:
         # end-effector position and velocity
-        ee_position = np.array(self.sim.get_ee_position())
-        ee_velocity = np.array(self.sim.get_ee_velocity())
+        ee_position = self.sim.get_ee_position()
+        ee_velocity = self.sim.get_ee_velocity()
         # fingers opening
         if not self.cfg.block_gripper:
             fingers_width = self.sim.get_fingers_width()
-            observation = np.concatenate((ee_position, ee_velocity, [fingers_width]))
+            observation = torch.cat([ee_position, ee_velocity, fingers_width],dim=1)
         else:
-            observation = np.concatenate((ee_position, ee_velocity))
+            observation = torch.cat([ee_position, ee_velocity],dim=1)
         return observation
 
     def reset(self) -> None:

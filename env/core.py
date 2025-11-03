@@ -20,16 +20,22 @@ class Robot(ABC):
     def __init__(self):
         pass
 
-    # 将神经网络输出 转换成物理仿真引擎能理解的控制命令
+    # # 将神经网络输出 转换成物理仿真引擎能理解的控制命令
+    # @abstractmethod
+    # def set_action(self, action: np.ndarray) -> None:
+    #     """Set the action. Must be called just before sim.step().
+    #
+    #     Args:
+    #         action (np.ndarray): The action.
+    #     """
     @abstractmethod
-    def set_action(self, action: np.ndarray) -> None:
-        """Set the action. Must be called just before sim.step().
-
+    def step(self,action) -> None:
+        """
         Args:
-            action (np.ndarray): The action.
+            action:
         """
 
-    # 用于从仿真环境中提出机器人当前的观测信息。
+
     @abstractmethod
     def get_obs(self) -> np.ndarray:
         """Return the observation associated to the robot.

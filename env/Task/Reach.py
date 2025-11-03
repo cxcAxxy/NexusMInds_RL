@@ -1,9 +1,8 @@
 from typing import Any, Dict
 
 import numpy as np
-
 from ..core import Task
-from utils import distance
+from .utils import distance
 
 class Reach(Task):
     def __init__(
@@ -12,6 +11,8 @@ class Reach(Task):
         cfg
     ) -> None:
         super().__init__(sim)
+
+        self.sim=sim
         self.reward_type = cfg.reward_type
         self.distance_threshold = cfg.distance_threshold
         self.get_ee_position = cfg.get_ee_position
@@ -33,12 +34,13 @@ class Reach(Task):
         )
 
     def get_obs(self) -> np.ndarray:
-        return np.array([])  # no task-specific observation
+        return None
 
     def get_achieved_goal(self) -> np.ndarray:
-        ee_position = np.array(self.get_ee_position())
+        ee_position = np.array(self.sim.get_ee_position())
         return ee_position
 
+    # 不测试
     def reset(self) -> None:
         self.goal = self._sample_goal()
         self.sim.set_base_pose("target", self.goal, np.array([0.0, 0.0, 0.0, 1.0]))

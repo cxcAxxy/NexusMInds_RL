@@ -14,8 +14,8 @@ class Reach(Task):
         self.sim = sim
         self.device = cfg.device  # 新增 device 属性
         self.num_envs= cfg.num_envs
-        self.goal = torch.tensor((0.2 , 0.1 , 0),device=self.device)
-
+        self.goal = torch.tensor((0.5 , 0.5 , 0.3),device=self.device)
+        self.goal_ = self.goal.repeat(self.num_envs,1)
         self.reward_type = cfg.reward_type
         self.distance_threshold = torch.tensor(cfg.distance_threshold, dtype=torch.float32, device=self.device)
         self.goal_range_low = torch.tensor([-cfg.goal_range / 2, -cfg.goal_range / 2, 0.0],
@@ -23,19 +23,6 @@ class Reach(Task):
         self.goal_range_high = torch.tensor([cfg.goal_range / 2, cfg.goal_range / 2, cfg.goal_range],
                                             dtype=torch.float32, device=self.device)
 
-        self._create_scene()
-
-    def _create_scene(self) -> None:
-        # self.sim.create_plane(z_offset=-0.4)
-        #self.sim.create_table(length=1.1, width=0.7, height=0.4, x_offset=-0.3)
-        self.sim.create_sphere(
-            body_name="target",
-            radius=0.02,
-            mass=0.0,
-            ghost=True,
-            position=torch.zeros(3, dtype=torch.float32, device=self.device),
-            orn=torch.tensor([0,0,0,1],device=self.device)
-        )
 
     def get_obs(self):
         return None
@@ -61,11 +48,13 @@ class Reach(Task):
     #     return goal
 
     def is_success(self, achieved_goal: torch.Tensor) -> torch.Tensor:
-        d = distance(achieved_goal, self.goal)  # distance函数需支持torch张量
+        d = distance(achieved_goal, self.goal_)  # distance函数需支持torch张量
         return d < self.distance_threshold
 
     def compute_reward(self, achieved_goal: torch.Tensor) -> torch.Tensor:
-        d = distance(achieved_goal,self.goal)
+
+
+        d = distance(achieved_goal,self.goal_)
         if self.reward_type == "sparse":
             return -(d > self.distance_threshold).float()
         else:

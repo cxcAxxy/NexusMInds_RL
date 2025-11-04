@@ -56,6 +56,13 @@ class Gym():
         print("Loading asset '%s' from '%s'" % (urdf_file, asset_root))
         self.robot_asset = self.gym.load_asset(self.sim, asset_root, urdf_file, asset_options)
 
+        asset_options = gymapi.AssetOptions()
+        asset_options.fix_base_link = True  # ghost表示静态物体
+        asset_options.angular_damping = 0.01
+        asset_options.linear_damping = 0.01
+
+        # 创建球体资产（所有环境共用一个asset）
+        self.sphere_asset = self.gym.create_sphere(self.sim, 0.05, asset_options)
 
     #后面接入参数，设置pd参数等等
     def set_dof_states_and_propeties(self):
@@ -81,9 +88,15 @@ class Gym():
         pose.p =gymapi.Vec3(base_pos[0],base_pos[1],base_pos[2])
         pose.r=gymapi.Quat(base_orn[0],base_orn[1],base_orn[2],base_orn[3])
 
+        # 初始化存储句柄
+        transform_shpere = gymapi.Transform()
+        transform_shpere.p = gymapi.Vec3(0.5, 0.5, 0.3)
+        transform_shpere.r = gymapi.Quat(0, 0, 0, 1)
+
         self.num_envs=num_envs
         self.envs=[]
         self.ee_idxs=[]
+
         self.init_pos_list=[]
         self.init_orn_list=[]
         
@@ -100,6 +113,8 @@ class Gym():
 
             # Add franka
             robot_handle = self.gym.create_actor(env, self.robot_asset, pose, "franka", i, 1)
+
+            shpere_handle = self.gym.create_actor(env, self.sphere_asset, transform_shpere,"target", i, 0)
 
             # Set initial DOF states
             self.gym.set_actor_dof_states(env, robot_handle, self.default_dof_state, gymapi.STATE_ALL)
@@ -236,13 +251,7 @@ class Gym():
     # ✅ 末端执行器位置
     def get_ee_position(self):
 
-        print("-------------")
 
-        # 打印所有的
-        print("rb_states")
-        print(self.rb_states)
-
-        print(self.ee_idxs)
         ee_pos = self.rb_states[self.ee_idxs, :3]
         return ee_pos
 
@@ -314,40 +323,28 @@ class Gym():
         plane_params.normal = gymapi.Vec3(0, 0, 1)
         self.gym.add_ground(self.sim, plane_params)
 
-    def create_box(self):
-        asset_options = gymapi.AssetOptions()
-        asset = self.gym.create_box(self.sim, 0.2, 0.2, 0.2, asset_options)
-        return asset
-
-
-#   这个地方还要支持多个环境的，后面抓紧时间改
-    def create_sphere(self,body_name,radius,mass,ghost,position,orn):
+#   这个地方还要支持多个环境的，后面抓紧时间改，注意idx，就是在actor当中的，可能会影响顺序的问题
+    def create_sphere(self, body_name, radius, mass, ghost, position, orn):
         # 设置球体资产选项
         asset_options = gymapi.AssetOptions()
-        asset_options.fix_base_link = ghost  # 如果是 ghost，可以固定
-        asset_options.density = mass / ((4 / 3) * 3.14159 * radius ** 3)  # 根据密度计算质量
+        asset_options.fix_base_link = ghost  # ghost表示静态物体
+        asset_options.density = mass / ((4 / 3) * 3.14159 * radius ** 3)
         asset_options.angular_damping = 0.01
         asset_options.linear_damping = 0.01
-        asset_options.enable_gravity = not ghost
 
-        # 创建球体资产
-        asset = self.gym.create_sphere(self.sim, radius, asset_options)
+        # 创建球体资产（所有环境共用一个asset）
+        sphere_asset = self.gym.create_sphere(self.sim, radius, asset_options)
 
-        # 创建 Transform
+        # 初始化存储句柄
+        self.sphere_handles = []
         transform = gymapi.Transform()
         transform.p = gymapi.Vec3(position[0], position[1], position[2])
         transform.r = gymapi.Quat(orn[0], orn[1], orn[2], orn[3])
+        # 遍历所有环境创建球体
+        for i, env in enumerate(self.envs):
 
-        # 在 sim 中实例化 actor
-        actor_handle = self.gym.create_actor(self.sim, asset, transform, body_name,0,0)
+            # 创建 actor
+            actor_handle = self.gym.create_actor(env, sphere_asset, transform, body_name, i, 0)
 
-        return actor_handle
-
-
-
-        return asset
-
-    def create_table(self):
-        asset_options = gymapi.AssetOptions()
-        asset = self.gym.create_box(self.sim, 1.0, 0.6, 0.05, asset_options)
-        return asset
+            # 保存句柄
+            self.sphere_handles.append(actor_handle)

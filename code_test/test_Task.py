@@ -1,6 +1,8 @@
+import time
+
 from env.Robot.gym_env.sim.pygym import Gym
 
-from env.Task.Reach_torch import Reach
+from env.Task.Reach import Reach
 
 from env.Robot.gym_env.instance.franka import Franka
 
@@ -32,7 +34,11 @@ def test():
 
         reward = task.compute_reward(task.sim.get_ee_position())
         print(reward)
+
+        print(task.is_success(task.sim.get_ee_position()))
         robot.step(action)
+
+    time.sleep(5)
 
 
 

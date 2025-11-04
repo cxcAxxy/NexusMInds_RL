@@ -1,19 +1,19 @@
-import time
+import sys
+import os
+# 添加项目根目录到Python路径
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from isaacgym import gymutil
 from env.Robot.gym_env.sim.pygym import Gym
-
-from env.Task.Reach import Reach
-
 from env.Robot.gym_env.instance.franka import Franka
-
-from configs.Robot_config import Config
-from configs.Task_config import ReachConfig
-
-from isaacgym import gymapi, gymutil
-
+from env.Task.Reach import Reach
+from configs.Robot_config import FrankaReachCfg
 import torch
 
-def test():
+asset_root="/home/ymy/Desktop/NexusMind_rl/env/assets"
+urdf_file="urdf/franka_description/robots/franka_panda.urdf"
+
+def test_reach():
     args = gymutil.parse_arguments(
         description="test Gym Simulation",
         custom_parameters=[
@@ -22,25 +22,43 @@ def test():
             {"name": "--headless", "type": bool, "default": False, "help": "Run simulation without viewer"},
         ]
     )
-    cfg=Config()
+
+    cfg = FrankaReachCfg()
     _Gym= Gym(args)
-    robot=Franka(_Gym,cfg)
-    task = Reach(_Gym,ReachConfig)
+    robot=Franka(_Gym,cfg.robotcfg)
+    task = Reach(_Gym, cfg.taskcfg)
 
+    # env_ids = torch.arange(cfg.all.num_envs, device=cfg.all.device)
+    # task.reset_ids(env_ids)
+    # print("Goals:", task.goal)
+    # print("EE positions:", task.get_achieved_goal())
 
-    action=torch.tensor([[1,1,1],[0.5,0.5,0.5],[0.8,0.6,0.4],[1,1,1]],device="cuda:0")
+    # desired_goal = torch.rand((cfg.all.num_envs, 3), device=task.device)
+    # achieved_goal = task.get_achieved_goal()    
+    # reward = task.compute_reward(achieved_goal, desired_goal)
 
-    for i in range (30):
+    # print("Achieved Goals:\n", achieved_goal)
+    # print("Desired Goals:\n", desired_goal)
+    # print("Reward:\n", reward)
 
-        reward = task.compute_reward(task.sim.get_ee_position())
-        print(reward)
-
-        print(task.is_success(task.sim.get_ee_position()))
+    for step in range(1):
+        print(f"init EE positions:", task.get_achieved_goal())
+        action = torch.rand((cfg.all.num_envs, robot.num_actions), device=cfg.all.device) * 2 - 1
         robot.step(action)
 
-    time.sleep(5)
+        desired_goal = torch.rand((cfg.all.num_envs, 3), device=task.device)
+        achieved_goal = task.get_achieved_goal()    
+        reward = task.compute_reward(achieved_goal, desired_goal)
 
+        print("Achieved Goals:\n", achieved_goal)
+        print("Desired Goals:\n", desired_goal)
+        print("Reward:\n", reward)
+
+        env_ids = torch.arange(cfg.all.num_envs, device=cfg.all.device)
+        task.reset_ids(env_ids)
+        print("Achieved Goals:\n", achieved_goal)
+        print("Desired Goals:\n", desired_goal)
 
 
 if __name__ == "__main__":
-    test()
+    test_reach()

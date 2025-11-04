@@ -30,7 +30,7 @@ def test():
     gym_test.pre_simulate(args.num_envs,asset_root,urdf_file,base_pos,base_orn)
     init_ee_pos=gym_test.get_ee_position()
     init_ee_orn=gym_test.get_ee_orientation()
-    offset = torch.tensor([0.5, 0.5, 0.35], device=init_ee_pos.device)
+    offset = torch.tensor([-0.4, -0.2, 0.2], device=init_ee_pos.device)
     target_pos = init_ee_pos + offset
 
     target_orn=init_ee_orn

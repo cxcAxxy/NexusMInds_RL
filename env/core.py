@@ -37,11 +37,11 @@ class Robot(ABC):
 
 
     @abstractmethod
-    def get_obs(self) -> np.ndarray:
+    def get_obs(self) -> torch.Tensor:
         """Return the observation associated to the robot.
 
         Returns:
-            np.ndarray: The observation.
+            torch.Tensor: The observation.
         """
 
     @abstractmethod
@@ -62,33 +62,40 @@ class Task(ABC):
 
     # 主要是 set a new goal,看任务需要重置吗，还是说一样。
     @abstractmethod
-    def reset(self) -> None:
+    def reset_ids(self, env_ids: torch.Tensor) -> torch.Tensor:
         """Reset the task: sample a new goal."""
 
     # return the observation associated to the task,这个后续比较有用，用于扩展。
     @abstractmethod
-    def get_obs(self) -> np.ndarray:
+    def get_obs(self) -> torch.Tensor:
         """Return the observation associated to the task."""
 
 
     #  这个achieved_goal理解为 当前机器人的已经达到的目标状态。
     @abstractmethod
-    def get_achieved_goal(self) -> np.ndarray:
+    def get_achieved_goal(self) -> torch.Tensor:
         """Return the achieved goal."""
 
-    def get_goal(self) -> np.ndarray:
-        """Return the current goal."""
+    def get_goal(self) -> torch.Tensor:
+        """Return the current desired goal."""
         if self.goal is None:
-            raise RuntimeError("No goal yet, call reset() first")
-        else:
-            return self.goal.copy()
+            raise RuntimeError("Goal not set yet — call reset() first.")
+        return self.goal.clone()
 
     @abstractmethod
-    def is_success(self, achieved_goal: np.ndarray, desired_goal: np.ndarray, info: Dict[str, Any] = {}) -> np.ndarray:
+    def is_success(
+        self,
+        achieved_goal: torch.Tensor,
+        desired_goal: torch.Tensor,
+    ) -> torch.Tensor:
         """Returns whether the achieved goal match the desired goal."""
 
     @abstractmethod
-    def compute_reward(self, achieved_goal: np.ndarray, desired_goal: np.ndarray, info: Dict[str, Any] = {}) -> np.ndarray:
+    def compute_reward(
+        self,
+        achieved_goal: torch.Tensor,
+        desired_goal: torch.Tensor,
+    ) -> torch.Tensor:
         """Compute reward associated to the achieved and the desired goal."""
 
 
@@ -98,7 +105,7 @@ class RobotTaskEnv():
         self,
         robot: Robot,
         task: Task,
-        cfg
+        cfg: Any,
 
     ) -> None:
 
@@ -108,21 +115,21 @@ class RobotTaskEnv():
         # self.metadata["render_fps"] = 1 / self.sim.dt
         self.robot = robot
         self.task = task
-        self.device=cfg.device
-        self.num_envs=cfg.num_envs
-
-
-        observation,privileged_obs,achieved_goal,desired_goal,_,_,_ = self.reset()  # required for init; seed can be changed later
-        # 后面这个地方要改为,后面这个地方前面是环境的信息。
-        self.num_obs = observation["observation"].shape[1]
-        self.num_privileged_obs=None    # 后续更新
-
-        self.num_achieved_goal = observation["achieved_goal"].shape[1]
-        self.num_desired_goal = observation["desired_goal"].shape[1]
-
-
+        self.cfg = cfg  # 保存配置对象
+        # 优先使用模拟器的device，保持与Isaac Gym张量一致
+        self.device = getattr(self.sim, 'device', cfg.all.device)
+        self.num_envs=cfg.all.num_envs
         self.num_actions=self.robot.num_actions
-        self.max_episode_length=cfg.max_episode_length
+
+
+
+        self.num_obs = self.robot.num_obs
+        self.num_privileged_obs=None    # 后续更新
+        self.num_achieved_goal = cfg.all.num_achieved_goal
+        self.num_desired_goal = cfg.all.num_desired_goal
+
+
+        self.max_episode_length=cfg.all.max_episode_length
 
         # allocate buffers
         self.obs_buf=torch.zeros(self.num_envs,self.num_obs,device=self.device,dtype=torch.float)
@@ -141,10 +148,16 @@ class RobotTaskEnv():
 
         self.compute_reward_task=task.compute_reward
         self.extras = {}
+        # 新增：按环境累计每回合奖励
+        self.episode_sums = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
 
-
-    def get_obs(self):
+    def get_observations(self):
+        """Get current observations for RSL-RL compatibility"""
         return self.obs_buf
+
+    def get_privileged_observations(self):
+        """Get privileged observations for RSL-RL compatibility"""
+        return self.privileged_obs_buf
 
     def get_achieved_goal_obs(self):
         return self.achieved_goal_buf
@@ -160,50 +173,46 @@ class RobotTaskEnv():
         self.robot.reset_ids(env_ids)
         self.task.reset_ids(env_ids)
 
-        #重置buffer的变量
+        # 在清零前，先把本回合的累计奖励写入日志信息
+        self.extras["episode"] = {}
+        self.extras["episode"]["goal_reward"] = torch.mean(self.episode_sums[env_ids]) / self.cfg.all.max_episode_length_s
+
+        # 重置buffer的变量
         self.rew_buf[env_ids]=0.
         self.episode_length_buf[env_ids]=0.
         self.time_out_buf[env_ids]=0.
         self.reset_buf[env_ids]=0.
+        # 清空该回合累计
+        self.episode_sums[env_ids] = 0.
 
-        #fill extras
-        self.extras["episode"] = {}
-
-        self.extras["episode"]["goal_reward"]=torch.mean(self.rew_buf[env_ids])/self.cfg.max_episode_length_s
         # send timeout info to the algorithm
         self.extras["time_outs"]=self.time_out_buf
-
-        #后续补充这些的
-        # for key in self.episode_sums.keys():
-        #     self.extras["episode"]['rew_' + key] = torch.mean(
-        #         self.episode_sums[key][env_ids]) / self.max_episode_length_s
-        #     self.episode_sums[key][env_ids] = 0.
-        # if self.cfg.commands.curriculum:
-        #     self.extras["episode"]["max_command_x"] = self.command_ranges["lin_vel_x"][1]
-        # # send timeout info to the algorithm
-        # if self.cfg.env.send_timeouts:
-        #     self.extras["time_outs"] = self.time_out_buf
 
     def reset(self):
         self.reset_idx(torch.arange(self.num_envs, device=self.device))
         #重置的另一种写法，按照初始的状态来,还有一点就是，应该还有各种的 achieved_goal,还有对应的goal
-        obs, privileged_obs,achieved_goal,desired_goal, _, _, _ = self.step(torch.zeros(self.num_envs, self.num_actions, device=self.device, requires_grad=False))
+        # obs, privileged_obs,achieved_goal,desired_goal, _, _, _ = self.step(torch.zeros(self.num_envs, self.num_actions, device=self.device, requires_grad=False))
+        obs, privileged_obs, _, _, _ = self.step(torch.zeros(self.num_envs, self.num_actions, device=self.device, requires_grad=False))
 
-        return obs, privileged_obs,achieved_goal,desired_goal,_,_,_
+        return obs, privileged_obs
 
 
-    def step(self, action: np.ndarray):
-        #修改为 多环境的，dones,还有extras，对应就是内部的信息。
-        action_sim=self.robot.set_action(action)
+    def step(self, action: torch.Tensor):
+        # 修改为 多环境的，dones,还有extras，对应就是内部的信息。
+        # 确保动作在与仿真相同的设备上
+        if action.device != self.device:
+            action = action.to(self.device)
+        action_sim = self.robot.step(action)
 
         # 这个地方设置 control.decimation。
-        for _ in range(self.cfg.control.decimation):
-            self.sim.step(action_sim)         # 这个地方一定要refesh，就是要更新数值，后面读取的一定是更新之后的。
+        for _ in range(self.cfg.all.decimation):
+            self.sim.step(action_sim, self.cfg.all.control_type_sim)
 
         # 更新的问题！！！！，这个更新放到仿真环境里面，就是robot的接口一定要是完全合适的。
         self.post_physics_step()
 
-        return self.obs_buf, self.privileged_obs_buf, self.achieved_goal_buf,self.desired_goal_buf,self.rew_buf, self.reset_buf, self.extras
+        # return self.obs_buf, self.privileged_obs_buf, self.achieved_goal_buf,self.desired_goal_buf,self.rew_buf, self.reset_buf, self.extras
+        return self.obs_buf, self.privileged_obs_buf, self.rew_buf, self.reset_buf, self.extras
 
     def post_physics_step(self):
 
@@ -239,20 +248,8 @@ class RobotTaskEnv():
         """
         self.rew_buf[:] = 0.
         self.rew_buf=self.compute_reward_task(self.achieved_goal_buf,self.desired_goal_buf)
-
-        # 目前奖励只有一个，后面可是使用,就是记录每一个的
-        #self.episode_sums[name] += rew
-        # 设置 是否只有正确奖励A
-        # if self.cfg.rewards.only_positive_rewards:
-        #     self.rew_buf[:] = torch.clip(self.rew_buf[:], min=0.)
-        # add termination reward after clipping
-
-
-        # 维护各个奖励的reward_scalse这个具体的操作还有后续还要处理，然后termination感觉重复计算了
-        # if "termination" in self.reward_scales:
-        #     rew = self._reward_termination() * self.reward_scales["termination"]
-        #     self.rew_buf += rew
-        #     self.episode_sums["termination"] += rew
+        # 累计到每回合和
+        self.episode_sums += self.rew_buf
 
     def _reward_termination(self):
         # Terminal reward / penalty

@@ -35,6 +35,13 @@ class Gym():
         else:
             raise Exception("This example can only be used with PhysX")
 
+        # 根据参数确定张量设备
+        if getattr(args, 'use_gpu', False) or getattr(args, 'use_gpu_pipeline', False):
+            compute_id = getattr(args, 'compute_device_id', 0)
+            self.device = torch.device(f'cuda:{compute_id}') if torch.cuda.is_available() else torch.device('cpu')
+        else:
+            self.device = torch.device('cpu')
+
         # create sim
         self.sim = self.gym.create_sim(args.compute_device_id, args.graphics_device_id, args.physics_engine,self.sim_params)
         if self.sim is None:
@@ -56,13 +63,6 @@ class Gym():
         print("Loading asset '%s' from '%s'" % (urdf_file, asset_root))
         self.robot_asset = self.gym.load_asset(self.sim, asset_root, urdf_file, asset_options)
 
-        asset_options = gymapi.AssetOptions()
-        asset_options.fix_base_link = True  # ghost表示静态物体
-        asset_options.angular_damping = 0.01
-        asset_options.linear_damping = 0.01
-
-        # 创建球体资产（所有环境共用一个asset）
-        self.sphere_asset = self.gym.create_sphere(self.sim, 0.05, asset_options)
 
     #后面接入参数，设置pd参数等等
     def set_dof_states_and_propeties(self):
@@ -88,15 +88,9 @@ class Gym():
         pose.p =gymapi.Vec3(base_pos[0],base_pos[1],base_pos[2])
         pose.r=gymapi.Quat(base_orn[0],base_orn[1],base_orn[2],base_orn[3])
 
-        # 初始化存储句柄
-        transform_shpere = gymapi.Transform()
-        transform_shpere.p = gymapi.Vec3(0.5, 0.5, 0.3)
-        transform_shpere.r = gymapi.Quat(0, 0, 0, 1)
-
         self.num_envs=num_envs
         self.envs=[]
         self.ee_idxs=[]
-
         self.init_pos_list=[]
         self.init_orn_list=[]
         
@@ -113,8 +107,6 @@ class Gym():
 
             # Add franka
             robot_handle = self.gym.create_actor(env, self.robot_asset, pose, "franka", i, 1)
-
-            shpere_handle = self.gym.create_actor(env, self.sphere_asset, transform_shpere,"target", i, 0)
 
             # Set initial DOF states
             self.gym.set_actor_dof_states(env, robot_handle, self.default_dof_state, gymapi.STATE_ALL)
@@ -135,6 +127,8 @@ class Gym():
 
     def set_camera(self):
         # Point camera at middle env
+        if getattr(self.args, 'headless', False):
+            return
         cam_pos = gymapi.Vec3(4, 3, 3)
         cam_target = gymapi.Vec3(-4, -3, 0)
         middle_env = self.envs[self.num_envs // 2 + self.num_per_row // 2]
@@ -160,15 +154,6 @@ class Gym():
         self.set_camera()
         self.gym.prepare_sim(self.sim)
         self.get_state_tensors()
-
-
-        # while True:
-        #     self.gym.simulate(self.sim)
-        #     self.gym.fetch_results(self.sim, True)
-        #
-        #     # Step rendering
-        #     self.gym.step_graphics(self.sim)
-        #     self.gym.draw_viewer(self.viewer, self.sim, False)
 
 
     def get_state_tensors(self):
@@ -210,9 +195,10 @@ class Gym():
         self.gym.simulate(self.sim)
         self.gym.fetch_results(self.sim, True)
         self.refresh()
-        # Step rendering
-        self.gym.step_graphics(self.sim)
-        self.gym.draw_viewer(self.viewer, self.sim, False)
+        # Step rendering (skip when headless)
+        if not getattr(self.args, 'headless', False):
+            self.gym.step_graphics(self.sim)
+            self.gym.draw_viewer(self.viewer, self.sim, False)
 
     def refresh(self):
         # 看上层从底层读取了什么,那么这个地方就进行了一个什么refresh
@@ -251,7 +237,13 @@ class Gym():
     # ✅ 末端执行器位置
     def get_ee_position(self):
 
+        # print("-------------")
 
+        # # 打印所有的
+        # print("rb_states")
+        # print(self.rb_states)
+
+        # print(self.ee_idxs)
         ee_pos = self.rb_states[self.ee_idxs, :3]
         return ee_pos
 
@@ -308,43 +300,64 @@ class Gym():
             self.set_joint_angles(self.robot_mids)
 
     # ✅ 设置底座位姿
-    def set_actor_pose(self, name,idx, pos, orn):
+    def set_actor_pose(self, name, pos, orn):
         transform = gymapi.Transform()
+        # 把 Tensor 转为 list
+        if isinstance(pos, torch.Tensor):
+            pos = pos.detach().cpu().tolist()
+        if isinstance(orn, torch.Tensor):
+            orn = orn.detach().cpu().tolist()
         transform.p = gymapi.Vec3(pos[0], pos[1], pos[2])
         transform.r = gymapi.Quat(orn[0], orn[1], orn[2], orn[3])
-
-
-        for i in idx:
+        for i in range(self.num_envs):
             actor_handle = self.gym.find_actor_handle(self.envs[i], name)
-            self.gym.set_actor_transform(self.envs[i], actor_handle, transform)
+            self.gym.set_rigid_transform(self.envs[i], actor_handle, transform)
 
     def create_plane(self):
         plane_params = gymapi.PlaneParams()
         plane_params.normal = gymapi.Vec3(0, 0, 1)
         self.gym.add_ground(self.sim, plane_params)
 
-#   这个地方还要支持多个环境的，后面抓紧时间改，注意idx，就是在actor当中的，可能会影响顺序的问题
-    def create_sphere(self, body_name, radius, mass, ghost, position, orn):
-        # 设置球体资产选项
+    def create_box(self):
         asset_options = gymapi.AssetOptions()
-        asset_options.fix_base_link = ghost  # ghost表示静态物体
-        asset_options.density = mass / ((4 / 3) * 3.14159 * radius ** 3)
-        asset_options.angular_damping = 0.01
-        asset_options.linear_damping = 0.01
+        asset = self.gym.create_box(self.sim, 0.2, 0.2, 0.2, asset_options)
+        return asset
 
-        # 创建球体资产（所有环境共用一个asset）
-        sphere_asset = self.gym.create_sphere(self.sim, radius, asset_options)
+    def create_sphere(self):
+        asset_options = gymapi.AssetOptions()
+        asset = self.gym.create_sphere(self.sim, 0.1, asset_options)
+        return asset
 
-        # 初始化存储句柄
-        self.sphere_handles = []
-        transform = gymapi.Transform()
-        transform.p = gymapi.Vec3(position[0], position[1], position[2])
-        transform.r = gymapi.Quat(orn[0], orn[1], orn[2], orn[3])
-        # 遍历所有环境创建球体
-        for i, env in enumerate(self.envs):
+    def create_table(self):
+        asset_options = gymapi.AssetOptions()
+        asset = self.gym.create_box(self.sim, 1.0, 0.6, 0.05, asset_options)
+        return asset
 
-            # 创建 actor
-            actor_handle = self.gym.create_actor(env, sphere_asset, transform, body_name, i, 0)
+    def reset_joint_states(self, env_ids):
+        """重置指定环境的关节状态到初始位置（GPU pipeline 友好：使用 Tensor API）
+        
+        Args:
+            env_ids: 需要重置的环境ID，torch.Tensor类型
+        """
+        if env_ids is None or len(env_ids) == 0:
+            return
+        # 确保最新的 dof tensor 已获取
+        self.gym.refresh_dof_state_tensor(self.sim)
 
-            # 保存句柄
-            self.sphere_handles.append(actor_handle)
+        # Isaac Gym 的 DOF 状态张量按环境连续存储
+        dofs_per_env = self.robot_num_dofs
+        # 目标位姿/速度
+        target_pos = torch.as_tensor(self.robot_mids, device=self.dof_states.device, dtype=self.dof_states.dtype)
+        target_vel = torch.zeros_like(target_pos)
+
+        for env_idx in env_ids.tolist():
+            start = env_idx * dofs_per_env
+            end = start + dofs_per_env
+            # pos -> [:,0], vel -> [:,1]
+            self.dof_states[start:end, 0] = target_pos
+            self.dof_states[start:end, 1] = target_vel
+
+        # 回写整张 dof 状态张量（GPU pipeline 允许）
+        self.gym.set_dof_state_tensor(self.sim, gymtorch.unwrap_tensor(self.dof_states))
+        # 刷新张量视图
+        self.refresh()

@@ -29,28 +29,38 @@ class Franka(Robot):
             des_orn=self.sim.get_ee_orientation()
             u=self.sim.ee_pos_to_torque(des_pos,des_orn)
 
-            for i in  range(self.cfg.control_decimation):
-                self.sim.step(u,self.cfg.control_type_sim)
+            return u
+            # for i in  range(self.cfg.control_decimation):
+            #     self.sim.step(u,self.cfg.control_type_sim)
 
         else:
             raise Exception("需要更新其他的控制方式")
 
-    def get_obs(self) -> np.ndarray:
+    def get_obs(self) -> torch.Tensor:
         # end-effector position and velocity
         ee_position = self.sim.get_ee_position()
         ee_velocity = self.sim.get_ee_velocity()
+        
         # fingers opening
         if not self.cfg.block_gripper:
             fingers_width = self.sim.get_fingers_width()
-            observation = torch.cat([ee_position, ee_velocity, fingers_width],dim=1)
+            # 确保 fingers_width 是2维张量 (num_envs, 1)
+            if fingers_width.dim() == 1:
+                fingers_width = fingers_width.unsqueeze(1)
+            observation = torch.cat([ee_position, ee_velocity, fingers_width], dim=1)
         else:
-            observation = torch.cat([ee_position, ee_velocity],dim=1)
+            observation = torch.cat([ee_position, ee_velocity], dim=1)
         return observation
+
+    def reset_ids(self, env_ids):
+        # 重置关节位置和速度
+        self.sim.reset_joint_states(env_ids)
 
     def reset(self) -> None:
         """Reset the robot and return the observation."""
-        self.sim.set_joint_neutral()
-
+        # 重置所有环境
+        env_ids = torch.arange(self.num_envs, device=self.sim.device if hasattr(self.sim, 'device') else 'cpu')
+        self.reset_ids(env_ids)
 
     #后面是根据机器的模型，自己定义的一些函数，服务于set_action,get_obs。
     def ee_displacement_to_target_arm_angles(self, ee_displacement: np.ndarray) -> np.ndarray:

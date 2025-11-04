@@ -1,5 +1,4 @@
-
-from base_config import BaseConfig
+from .base_config import BaseConfig
 
 class rslCfgPPO(BaseConfig):
     seed = 1

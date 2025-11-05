@@ -3,7 +3,7 @@ from typing import Any, Dict
 import torch
 from ..core import Task
 
-class Reach(Task):
+class Reach_fixed_point(Task):
     def __init__(self, sim, cfg) -> None:
         super().__init__(sim)
         self.sim = sim

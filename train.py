@@ -5,7 +5,7 @@ import sys
 
 # 首先导入包含 Isaac Gym 的配置和环境模块
 from configs.Robot_config import FrankaReachCfg
-from env.TaskRobotEnv import FrankaReachGym
+from env.TaskRobotEnv import FrankaReachRandPointsGym
 
 # 然后导入可能包含 PyTorch 的 rsl_rl 模块
 from rsl_rl.runners import OnPolicyRunner
@@ -18,7 +18,7 @@ def train():
     train_cfg = class_to_dict(rslCfgPPO())
     
     # 使用正确的环境类和配置
-    env = FrankaReachGym(cfg)
+    env = FrankaReachRandPointsGym(cfg)
     
     # 将 Runner 放在与环境一致的设备上
 

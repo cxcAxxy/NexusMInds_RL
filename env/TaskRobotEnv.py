@@ -9,18 +9,30 @@ from env.Robot.gym_env.sim.pygym import Gym
 # 仿真引擎等定制的机器人步进仿真平台
 #这个地方的按照配置文件的方式进行处理
 
-class FrankaReachGym(RobotTaskEnv):
+class FrankaReachFixedPointGym(RobotTaskEnv):
     def __init__(self, cfg) -> None:
 
         sim = Gym(cfg.gymcfg)
         robot = Franka(sim, cfg.robotcfg)
-        task = Reach(sim, cfg.taskcfg)
+        task = Reach_fixed_point(sim, cfg.taskcfg)
 
-            # 调用父类初始化，传入机器人、任务和配置
+        # 调用父类初始化，传入机器人、任务和配置
         super().__init__(
             robot,
             task,
             cfg)
-            
+
+class FrankaReachRandPointsGym(RobotTaskEnv):
+    def __init__(self, cfg) -> None:
+        sim = Gym(cfg.gymcfg)
+        robot = Franka(sim, cfg.robotcfg)
+        task = Reach_random_points(sim, cfg.taskcfg)
+
+        # 调用父类初始化，传入机器人、任务和配置
+        super().__init__(
+            robot,
+            task,
+            cfg)
+
 
 

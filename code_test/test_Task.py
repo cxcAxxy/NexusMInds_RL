@@ -6,7 +6,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from isaacgym import gymutil
 from env.Robot.gym_env.sim.pygym import Gym
 from env.Robot.gym_env.instance.franka import Franka
-from env.Task.Reach import Reach
+from env.Task.Reach_fixed_point import Reach
 from configs.Robot_config import FrankaReachCfg
 import torch
 

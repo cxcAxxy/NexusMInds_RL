@@ -35,8 +35,8 @@ class RobotCfg:
         self.control_type = "ee"      
         self.block_gripper = True 
         self.num_actions = 3            
-        self.num_obs = 6
-        self.num_envs = 4  # 修改为与其他配置一致
+        self.num_obs = 9
+        self.num_envs = 4 # 修改为与其他配置一致
         self.control_type_sim = "effort"             
 
         # 模型路径与姿态
@@ -48,7 +48,7 @@ class RobotCfg:
 
         self.ee_link = "panda_hand"
         self.headless = "False"
-        self.control_decimation = 4
+        self.control_decimation = 6
         self.action_low = -1
         self.action_high = 1
 
@@ -64,7 +64,7 @@ class TaskCfg:
         self.reward_type = "dense"
         self.distance_threshold = 0.05
 
-        self.goal_range = 0.6
+        self.goal_range = 1
         self.get_ee_position = None
 
 
@@ -96,8 +96,8 @@ class LeggedRobotCfgDDPG(BaseConfig):
 
     class policy:
         init_noise_std = 0.1
-        actor_hidden_dims = [400, 300, 256]
-        critic_hidden_dims = [400, 300, 256]
+        actor_hidden_dims = [516, 256, 256,128]
+        critic_hidden_dims = [516, 256, 256,128]
         activation = 'relu'
         n_critics = 2
 

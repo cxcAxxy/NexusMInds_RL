@@ -237,13 +237,6 @@ class Gym():
     # ✅ 末端执行器位置
     def get_ee_position(self):
 
-        # print("-------------")
-
-        # # 打印所有的
-        # print("rb_states")
-        # print(self.rb_states)
-
-        # print(self.ee_idxs)
         ee_pos = self.rb_states[self.ee_idxs, :3]
         return ee_pos
 
@@ -300,7 +293,7 @@ class Gym():
             self.set_joint_angles(self.robot_mids)
 
     # ✅ 设置底座位姿
-    def set_actor_pose(self, name, pos, orn):
+    def set_actor_pose(self, name, pos, orn,env_ids):
         transform = gymapi.Transform()
         # 把 Tensor 转为 list
         if isinstance(pos, torch.Tensor):
@@ -309,7 +302,7 @@ class Gym():
             orn = orn.detach().cpu().tolist()
         transform.p = gymapi.Vec3(pos[0], pos[1], pos[2])
         transform.r = gymapi.Quat(orn[0], orn[1], orn[2], orn[3])
-        for i in range(self.num_envs):
+        for i in env_ids:
             actor_handle = self.gym.find_actor_handle(self.envs[i], name)
             self.gym.set_rigid_transform(self.envs[i], actor_handle, transform)
 
@@ -318,20 +311,7 @@ class Gym():
         plane_params.normal = gymapi.Vec3(0, 0, 1)
         self.gym.add_ground(self.sim, plane_params)
 
-    def create_box(self):
-        asset_options = gymapi.AssetOptions()
-        asset = self.gym.create_box(self.sim, 0.2, 0.2, 0.2, asset_options)
-        return asset
 
-    def create_sphere(self):
-        asset_options = gymapi.AssetOptions()
-        asset = self.gym.create_sphere(self.sim, 0.1, asset_options)
-        return asset
-
-    def create_table(self):
-        asset_options = gymapi.AssetOptions()
-        asset = self.gym.create_box(self.sim, 1.0, 0.6, 0.05, asset_options)
-        return asset
 
     def reset_joint_states(self, env_ids):
         """重置指定环境的关节状态到初始位置（GPU pipeline 友好：使用 Tensor API）
@@ -356,6 +336,11 @@ class Gym():
             # pos -> [:,0], vel -> [:,1]
             self.dof_states[start:end, 0] = target_pos
             self.dof_states[start:end, 1] = target_vel
+
+        # 重新更新状态
+        self.dof_pos = self.dof_states[:, 0].view(self.num_envs, -1, 1)
+        self.dof_vel = self.dof_states[:, 1].view(self.num_envs, -1, 1)
+
 
         # 回写整张 dof 状态张量（GPU pipeline 允许）
         self.gym.set_dof_state_tensor(self.sim, gymtorch.unwrap_tensor(self.dof_states))

@@ -13,7 +13,7 @@ class Reach(Task):
         self.num_envs = cfg.num_envs
 
         # 获取末端执行器位置的函数
-        self.get_ee_position = sim.get_ee_position
+        self.get_ee_position = sim.get_ee_position()
 
         # 目标范围
         self.goal_range_low = torch.tensor([-cfg.goal_range / 2, -cfg.goal_range / 2, 0.0],
@@ -24,20 +24,13 @@ class Reach(Task):
         # 初始化目标缓存 (num_envs, 3)
         self.goal = torch.zeros((self.num_envs, 3), dtype=torch.float32, device=self.device)
 
-        self._create_scene()
-
-    def _create_scene(self) -> None:
-        """创建场景中的桌子和目标球"""
-        self.sim.create_table()
-        self.sim.create_sphere()
-
     def get_obs(self) -> torch.Tensor:
         """返回任务观测，可自行扩展"""
         return torch.empty((self.num_envs, 0), device=self.device)
 
     def get_achieved_goal(self) -> torch.Tensor:
         """获取所有环境的末端执行器位置 (num_envs, 3)"""
-        ee_positions = self.sim.get_ee_position().reshape(self.num_envs, 3)
+        ee_positions = self.sim.get_ee_position()
         return ee_positions
 
 
@@ -47,13 +40,14 @@ class Reach(Task):
         # self.goal[env_ids] = goals
 
         # 固定目标位姿
-        self.goal[env_ids] = torch.tensor([0.3, 0.2, 0.1], device=self.device).unsqueeze(0).repeat(len(env_ids), 1)
+        self.goal[env_ids] = torch.tensor([0.5, 0.3, 0.25], device=self.device).unsqueeze(0).repeat(len(env_ids), 1)
+        # 通过设置的 goal 和 没有旋转的 orn
         pos = torch.tensor([0.3, 0.2, 0.1], device=self.device)  # 固定位置
         orn = torch.tensor([0.0, 0.0, 0.0, 1.0], device=self.device)  # 固定姿态
-        self.sim.set_actor_pose("target", pos, orn) 
+        self.sim.set_actor_pose("target", pos, orn,env_ids)
 
 
-    def _sample_goals(self, num_envs: int) -> torch.Tensor:
+    def _sample_goals_rand(self, num_envs: int) -> torch.Tensor:
         """为若干环境随机生成目标 (num_envs, 3)"""
         rand = torch.rand((num_envs, 3), device=self.device)
         goals = self.goal_range_low + (self.goal_range_high - self.goal_range_low) * rand

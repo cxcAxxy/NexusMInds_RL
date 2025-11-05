@@ -121,8 +121,6 @@ class RobotTaskEnv():
         self.num_envs=cfg.all.num_envs
         self.num_actions=self.robot.num_actions
 
-
-
         self.num_obs = self.robot.num_obs
         self.num_privileged_obs=None    # 后续更新
         self.num_achieved_goal = cfg.all.num_achieved_goal
@@ -181,7 +179,8 @@ class RobotTaskEnv():
         self.rew_buf[env_ids]=0.
         self.episode_length_buf[env_ids]=0.
         self.time_out_buf[env_ids]=0.
-        self.reset_buf[env_ids]=0.
+        self.reset_buf[env_ids]=1.
+
         # 清空该回合累计
         self.episode_sums[env_ids] = 0.
 
@@ -193,7 +192,6 @@ class RobotTaskEnv():
         #重置的另一种写法，按照初始的状态来,还有一点就是，应该还有各种的 achieved_goal,还有对应的goal
         # obs, privileged_obs,achieved_goal,desired_goal, _, _, _ = self.step(torch.zeros(self.num_envs, self.num_actions, device=self.device, requires_grad=False))
         obs, privileged_obs, _, _, _ = self.step(torch.zeros(self.num_envs, self.num_actions, device=self.device, requires_grad=False))
-
         return obs, privileged_obs
 
 
@@ -211,11 +209,12 @@ class RobotTaskEnv():
         # 更新的问题！！！！，这个更新放到仿真环境里面，就是robot的接口一定要是完全合适的。
         self.post_physics_step()
 
-        # return self.obs_buf, self.privileged_obs_buf, self.achieved_goal_buf,self.desired_goal_buf,self.rew_buf, self.reset_buf, self.extras
+
+        # 这个地方的逻辑有问题
+
         return self.obs_buf, self.privileged_obs_buf, self.rew_buf, self.reset_buf, self.extras
 
     def post_physics_step(self):
-
         #更新buf的数值。
         self.episode_length_buf += 1
         self.check_termination()
@@ -238,6 +237,8 @@ class RobotTaskEnv():
 
         #这个地方也不进行一个更新，判断条件后面再说，根据任务后续设定
 
+        # 假设这个地方的判断：
+        self.reset_buf =0   # 后续根据碰撞进行修改，或者是其他的逻辑判断
         self.time_out_buf = self.episode_length_buf > self.max_episode_length # no terminal reward for time-outs
         self.reset_buf |= self.time_out_buf
 

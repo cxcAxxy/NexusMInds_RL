@@ -40,7 +40,7 @@ class RobotCfg:
         self.control_type_sim = "effort"             
 
         # 模型路径与姿态
-        self.asset = "/home/cxc/Desktop/NexusMInds_RL_Finally/env/assets"
+        self.asset = "/home/cxc/Desktop/NexusMinds_RL/env/assets"
         self.robot_files = "urdf/franka_description/robots/franka_panda.urdf"
         # 每个机器人的初始位置是一样的吗
         self.base_pose = [0,0,0]  # 每个环境的机器人位置
@@ -92,12 +92,12 @@ class FrankaReachCfg:
 
 class LeggedRobotCfgDDPG(BaseConfig):
     seed = 1
-    runner_class_name = 'OffPolicyRunner'
+    runner_class_name = 'OnPolicyRunner'
 
     class policy:
         init_noise_std = 0.1
-        actor_hidden_dims = [400, 300]
-        critic_hidden_dims = [400, 300]
+        actor_hidden_dims = [400, 300, 256]
+        critic_hidden_dims = [400, 300, 256]
         activation = 'relu'
         n_critics = 2
 
@@ -109,14 +109,14 @@ class LeggedRobotCfgDDPG(BaseConfig):
         lr = 1e-3
 
     class runner:
-        policy_class_name = 'TD3ActorCritic'
-        algorithm_class_name = 'DDPG'
+        policy_class_name = 'ActorCritic'
+        algorithm_class_name = 'PPO'
         # 更大的每迭代采样步数与总迭代数（约 200k 环境步）
         num_steps_per_env = 100
-        max_iterations = 2000
+        max_iterations = 2500
         buffer_size = 1e6
         save_interval = 100
-        experiment_name = 'DDPG_Panda'
+        experiment_name = 'PPO_Panda'
         run_name = ''
         # 新增：每次迭代更新次数与随机探索步数
         updates_per_iter = 10

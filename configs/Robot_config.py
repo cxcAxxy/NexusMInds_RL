@@ -9,7 +9,8 @@ args = gymutil.parse_arguments(
         custom_parameters=[
             {"name": "--use_gpu", "type": bool, "default": True, "help": "Use GPU for physics"},
             {"name": "--use_gpu_pipeline", "type": bool, "default": True, "help": "Use GPU pipeline"},
-            {"name": "--headless", "type": bool, "default": False, "help": "Run simulation without viewer"},
+            # {"name": "--headless", "type": bool, "default": True, "help": "Run simulation without viewer"},
+             {"name": "--headless", "type": bool, "default": False, "help": "Run simulation without viewer"},
         ]
     )
 
@@ -35,12 +36,12 @@ class RobotCfg:
         self.control_type = "ee"      
         self.block_gripper = True 
         self.num_actions = 3            
-        self.num_obs = 9
-        self.num_envs = 4 # 修改为与其他配置一致
+        self.num_obs = 6
+        self.num_envs = 3 # 修改为与其他配置一致
         self.control_type_sim = "effort"             
 
-        # 模型路径与姿态
-        self.asset = "/home/cxc/Desktop/NexusMinds_RL/env/assets"
+        # 模型路径与姿态 - 修复资产路径
+        self.asset = "/home/ymy/space_rl/NexusMInds_RL/env/assets"
         self.robot_files = "urdf/franka_description/robots/franka_panda.urdf"
         # 每个机器人的初始位置是一样的吗
         self.base_pose = [0,0,0]  # 每个环境的机器人位置
@@ -59,7 +60,7 @@ class TaskCfg:
     def __init__(self):
         self.name = "Reach"
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.num_envs = 4
+        self.num_envs = 3
 
         self.reward_type = "dense"
         self.distance_threshold = 0.05
@@ -67,12 +68,15 @@ class TaskCfg:
         self.goal_range = 1
         self.get_ee_position = None
 
+        # 调整轴向权重配置 [x, y, z] - 降低z轴权重，让训练更平衡
+        self.axis_weights = [1.0, 1.0, 1.5]  
+
 
 class AllCfg:
     """环境总体配置"""
     def __init__(self):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.num_envs = 4
+        self.num_envs = 3
         self.num_achieved_goal = 3
         self.num_desired_goal = 3
         self.max_episode_length = 200
@@ -89,38 +93,6 @@ class FrankaReachCfg:
         self.taskcfg = TaskCfg()
         self.all = AllCfg()
 
-
-class LeggedRobotCfgDDPG(BaseConfig):
-    seed = 1
-    runner_class_name = 'OnPolicyRunner'
-
-    class policy:
-        init_noise_std = 0.1
-        actor_hidden_dims = [516, 256, 256,128]
-        critic_hidden_dims = [516, 256, 256,128]
-        activation = 'relu'
-        n_critics = 2
-
-    class algorithm:
-        gamma = 0.99
-        tau = 0.005
-        batch_size = 256
-        max_size = 1_000_000
-        lr = 1e-3
-
-    class runner:
-        policy_class_name = 'ActorCritic'
-        algorithm_class_name = 'PPO'
-        # 更大的每迭代采样步数与总迭代数（约 200k 环境步）
-        num_steps_per_env = 100
-        max_iterations = 2500
-        buffer_size = 1e6
-        save_interval = 100
-        experiment_name = 'PPO_Panda'
-        run_name = ''
-        # 新增：每次迭代更新次数与随机探索步数
-        updates_per_iter = 10
-        start_random_steps = 1000
 
 
 

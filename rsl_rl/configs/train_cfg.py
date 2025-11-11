@@ -45,5 +45,34 @@ class rslCfgPPO(BaseConfig):
         checkpoint = -1  # -1 = last saved model
         resume_path = None  # updated from load_run and chkpt
 
+class LeggedRobotCfgDDPG(BaseConfig):
+    seed = 1
+    runner_class_name = 'OffPolicyRunner'
+
+    class policy:
+        init_noise_std = 0.1  # 减小初始噪声，提高稳定性
+        actor_hidden_dims = [512, 256, 256 ,128 ]  # 使用标准DDPG网络结构
+        critic_hidden_dims = [512, 256, 256, 128]  # 使用标准DDPG网络结构
+        activation = 'relu'  # 使用ReLU激活函数
+        n_critics = 1  # DDPG只需要一个Critic
+
+    class algorithm:
+        gamma = 0.99  # 提高折扣因子
+        tau = 0.005  # 使用较小的软更新参数
+        batch_size = 256  # 增加批量大小
+        lr_actor = 1e-3  # 降低Actor学习率
+        lr_critic = 1e-3  # Critic学习率可以稍高
+
+    class runner:
+        policy_class_name = 'DDPGActorCritic'
+        algorithm_class_name = 'DDPG'
+        num_steps_per_env = 50  # DDPG每步更新
+        max_iterations = 2000  # 增加训练迭代数
+        save_interval = 100
+        experiment_name = 'DDPG_Panda'
+        run_name = ''
+        start_random_steps = 1000  # 增加随机探索步数
+        max_size = int(1e6)  # 经验回放缓冲区大小
+
 class envCfg(BaseConfig):
     pass

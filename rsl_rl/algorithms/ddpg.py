@@ -12,11 +12,12 @@ class ReplayBuffer:
         self.ptr = 0
         self.full = False
 
+        # 为每个环境存储标量奖励和done标志
         self.obs_buf = torch.zeros((self.max_size, num_envs, obs_dim), dtype=torch.float32, device=self.device)
         self.next_obs_buf = torch.zeros((self.max_size, num_envs, obs_dim), dtype=torch.float32, device=self.device)
         self.act_buf = torch.zeros((self.max_size, num_envs, act_dim), dtype=torch.float32, device=self.device)
-        self.rew_buf = torch.zeros((self.max_size, num_envs, 1), dtype=torch.float32, device=self.device)
-        self.done_buf = torch.zeros((self.max_size, num_envs, 1), dtype=torch.float32, device=self.device)
+        self.rew_buf = torch.zeros((self.max_size, num_envs), dtype=torch.float32, device=self.device)  # 标量奖励
+        self.done_buf = torch.zeros((self.max_size, num_envs), dtype=torch.bool, device=self.device)    # 布尔done
         
     def add(self, obs, act, rew, done, next_obs):
 
@@ -31,23 +32,22 @@ class ReplayBuffer:
             self.full = True
 
     def sample(self, batch_size):
-        
         # 随机索引，torch 版本
         idx = torch.randint(0, self.size, (batch_size,), device=self.device)
 
         # 取出对应的 transitions
         obs = self.obs_buf[idx]          # [batch_size, num_envs, obs_dim]
         act = self.act_buf[idx]          # [batch_size, num_envs, act_dim]
-        rew = self.rew_buf[idx]          # [batch_size, num_envs, 1]
+        rew = self.rew_buf[idx]
         next_obs = self.next_obs_buf[idx]# [batch_size, num_envs, obs_dim]
-        done = self.done_buf[idx]        # [batch_size, num_envs, 1]
+        done = self.done_buf[idx]     
 
         # 如果希望展开 env 维度成标准训练 batch: [batch_size * num_envs, dim]
         obs = obs.reshape(-1, obs.shape[-1])
         act = act.reshape(-1, act.shape[-1])
-        rew = rew.reshape(-1, 1)
+        rew = rew.reshape(-1, 1)         # 展开后添加维度 [batch_size * num_envs, 1]
         next_obs = next_obs.reshape(-1, next_obs.shape[-1])
-        done = done.reshape(-1, 1)
+        done = done.reshape(-1, 1).float()  # 转换为float并添加维度 [batch_size * num_envs, 1]
 
         return obs, act, rew, next_obs, done
 
@@ -59,17 +59,20 @@ class ReplayBuffer:
 class DDPG:
     """Off-policy TD3/DDPG-style algorithm using DDPGActorCritic"""
     actor_critic: DDPGActorCritic
-    def __init__(self, actor_critic, device='cpu', gamma=0.99, tau=0.005, batch_size=256, lr=3e-4):
+    def __init__(self, actor_critic, device='cpu', gamma=0.99, tau=0.005, batch_size=256, lr_actor=1e-3,lr_critic=1e-3):
         self.ac = actor_critic
+        self.actor_critic = actor_critic 
         self.device = device
         self.gamma = gamma
         self.tau = tau
         self.batch_size = batch_size
+        self.lr_actor = lr_actor
+        self.lr_critic = lr_critic
         self.replay_buffer = None
 
         # Optimizers
-        self.actor_opt = torch.optim.Adam(self.ac.actor.parameters(), lr=lr)
-        self.critic_opt = torch.optim.Adam([p for q in self.ac.q_networks for p in q.parameters()], lr=lr)
+        self.actor_opt = torch.optim.Adam(self.ac.actor.parameters(), lr=lr_actor)
+        self.critic_opt = torch.optim.Adam([p for q in self.ac.q_networks for p in q.parameters()], lr=lr_critic)
 
     def init_storage(self, buffer_size, num_envs, obs_shape, act_shape):
         self.replay_buffer = ReplayBuffer(int(buffer_size), num_envs, obs_shape[0], act_shape[0], self.device)

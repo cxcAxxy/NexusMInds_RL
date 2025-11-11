@@ -174,6 +174,8 @@ class RobotTaskEnv():
         # 在清零前，先把本回合的累计奖励写入日志信息
         self.extras["episode"] = {}
         self.extras["episode"]["goal_reward"] = torch.mean(self.episode_sums[env_ids]) / self.cfg.all.max_episode_length_s
+        # send timeout info to the algorithm
+        self.extras["time_outs"]=self.time_out_buf
 
         # 重置buffer的变量
         self.rew_buf[env_ids]=0.
@@ -184,8 +186,6 @@ class RobotTaskEnv():
         # 清空该回合累计
         self.episode_sums[env_ids] = 0.
 
-        # send timeout info to the algorithm
-        self.extras["time_outs"]=self.time_out_buf
 
     def reset(self):
         self.reset_idx(torch.arange(self.num_envs, device=self.device))

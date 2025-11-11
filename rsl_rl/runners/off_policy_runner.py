@@ -1,150 +1,3 @@
-# import os
-# import torch
-# import numpy as np
-# from rsl_rl.modules import TD3ActorCritic
-# from rsl_rl.algorithms import DDPG
-
-# # ================= OffPolicyRunner =================
-# class OffPolicyRunner:
-
-#     def __init__(self, env, train_cfg, log_dir=None, device='cpu'):
-#         self.env = env
-#         self.cfg = train_cfg["runner"]
-#         self.alg_cfg = train_cfg["algorithm"]
-#         self.policy_cfg = train_cfg["policy"]
-#         self.device = device
-#         self.log_dir = log_dir
-
-
-#         obs_dim = int(env.observation_space.shape[0])
-#         act_dim = int(env.action_space.shape[0])
-#         self.num_envs = int(getattr(env, 'num_envs', 1))
-
-#         # 连续动作缩放
-#         self._action_high = np.asarray(env.action_space.high, dtype=np.float32)
-#         self._action_low = np.asarray(env.action_space.low, dtype=np.float32)
-#         self._max_action = np.asarray(env.action_space.high, dtype=np.float32)
-
-#         # ActorCritic 模型
-#         self.actor_critic = TD3ActorCritic(
-#             num_actor_obs=obs_dim,
-#             num_critic_obs=obs_dim,
-#             num_actions=act_dim,
-#             **self.policy_cfg
-#         ).to(self.device)
-
-#         # 算法
-#         self.alg = DDPG(self.actor_critic, device=self.device, **self.alg_cfg)
-
-#         self.alg.init_storage(
-#                 buffer_size=int(self.cfg["buffer_size"]),
-#                 obs_shape=[obs_dim],
-#                 act_shape=[act_dim]
-#             )
-        
-#         self.num_steps_per_env = int(self.cfg["num_steps_per_env"])
-#         self.save_interval = int(self.cfg["save_interval"])
-#         self.start_random_steps = int(self.cfg("start_random_steps"))
-#         self.tot_timesteps = 0
-#         self.current_learning_iteration = 0
-
-#     # ================== 主训练循环 ==================
-#     def learn(self, num_learning_iterations, eval_env=None, writer=None):
-#         obs, info  = self.env.reset()
-#         obs_t = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
-
-#         global_step = 0
-#         for iter_idx in range(num_learning_iterations):
-#             # ---------------- 收集数据 ----------------
-#             for _ in range(self.num_steps_per_env):
-#                 if global_step < self.start_random_steps:
-#                     # 纯随机探索填充 buffer（环境动作尺度）
-#                     action_env = self.env.action_space.sample()
-#                     # 转为策略尺度 [-1, 1] 用于存储
-#                     action_policy = np.clip(action_env / self._max_action, -1.0, 1.0)
-#                 else:
-#                     with torch.no_grad():
-#                         action_policy = self.actor_critic.act_with_noise(obs_t).cpu().numpy()
-
-#                     action_env = np.clip(action_policy * self._max_action,
-#                                         self._action_low, self._action_high)
-
-#                 next_obs, reward, terminated, truncated, info = self.env.step(action_env)
-#                 done_env = bool(terminated or truncated)
-#                 done_for_buffer = bool(terminated)  # 时间截断不作为终止，允许 bootstrap
-
-#                 # 存储 transition：存策略尺度动作，保证与更新时 actor 输出一致
-#                 self.alg.store_transition(
-#                     obs_t.detach().cpu().numpy(),
-#                     action_policy,
-#                     float(reward),
-#                     done_for_buffer,
-#                     next_obs
-#                 )
-#                 obs_t = torch.as_tensor(next_obs, dtype=torch.float32, device=self.device)
-#                 global_step += 1
-
-#                 if done_env:
-#                     obs, info = self.env.reset()
-#                     obs_t = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
-
-#             # ---------------- 更新算法 ----------------
-#             if global_step >= self.start_random_steps:
-#                 self.alg.update()
-#             self.current_learning_iteration += 1
-#             self.tot_timesteps += self.num_steps_per_env * self.num_envs
-
-#             # ---------------- 评估 ----------------
-#             if eval_env is not None and (iter_idx % 10 == 0):
-#                 score = self._evaluate(eval_env)
-#                 print(f"Iter: {iter_idx}, Eval Reward: {score:.2f}")
-#                 if writer is not None:
-#                     writer.add_scalar("eval_reward", score, iter_idx)
-
-#             # ---------------- 保存模型 ----------------
-#             if self.log_dir is not None and (iter_idx % self.save_interval == 0):
-#                 self.save_model(iter_idx)
-
-#         # ---------------- 结束清理 ----------------
-#         self.env.close()
-#         if eval_env is not None:
-#             eval_env.close()
-#         if writer is not None:
-#             writer.close()
-
-#     # ================== 评估 ==================
-#     def _evaluate(self, env, turns=3):
-#         total_reward = 0.0
-#         action_high = np.asarray(env.action_space.high, dtype=np.float32)
-#         action_low = np.asarray(env.action_space.low, dtype=np.float32)
-#         for _ in range(turns):
-#             obs, info = env.reset()
-#             done = False
-#             while not done:
-#                 with torch.no_grad():
-#                     obs_t = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
-#                     action = self.actor_critic.act(obs_t)
-#                 action_np = action.detach().cpu().numpy()
-#                 action_env = action_np * action_high
-#                 action_env = np.clip(action_env, action_low, action_high)
-#                 action_env = action_env.astype(env.action_space.dtype, copy=False)
-
-#                 obs, reward, terminated, truncated, info = env.step(action_env)
-#                 done = bool(terminated or truncated)
-
-#                 total_reward += float(reward)
-#         return total_reward / turns
-
-#     # ================== 保存模型 ==================
-#     def save_model(self, iter_idx):
-#         if self.log_dir is None:
-#             return
-#         os.makedirs(self.log_dir, exist_ok=True)
-#         save_path = os.path.join(self.log_dir, f"model_{iter_idx}.pt")
-#         torch.save(self.actor_critic.state_dict(), save_path)
-#         print(f"[Model Saved] -> {save_path}")
-
-
 import os
 import torch
 import numpy as np
@@ -192,6 +45,7 @@ class OffPolicyRunner:
         self.save_interval = int(self.cfg["save_interval"])
         self.start_random_steps = int(self.cfg["start_random_steps"])
         self.tot_timesteps = 0
+        self.tot_time = 0
         self.current_learning_iteration = 0
 
         _, _ = self.env.reset()
@@ -233,7 +87,7 @@ class OffPolicyRunner:
                             action = self.actor_critic.act_with_noise(obs_t) # 带噪声采样
 
                     next_obs, privileged_obs, reward, done_env, infos = self.env.step(action)
-                    next_obs, critic_obs, rewards, dones = next_obs.to(self.device), privileged_obs.to(self.device), reward.to(self.device), done_env.to(self.device)
+                    next_obs, critic_obs, rewards, dones = next_obs.to(self.device), privileged_obs.to(self.device) if privileged_obs is not None else None, reward.to(self.device), done_env.to(self.device)
 
                     # 储存这里需要再封装的好一些，类比rsl_rl！！！ 
                     # if 'time_outs' in infos:
@@ -267,17 +121,20 @@ class OffPolicyRunner:
 
 
             # ---------------- 更新算法 ----------------
+            critic_loss, actor_loss, noise_std = None, None, None
             if global_step >= self.start_random_steps:
                 critic_loss, actor_loss, noise_std = self.alg.update()
 
             stop = time.time()
             learn_time = stop - start
 
+            # ---------------- 记录日志 ----------------
+            if self.log_dir is not None:
+                self.log(locals(), critic_loss, actor_loss, noise_std)
+            
             ep_infos.clear()
 
             # ---------------- 保存模型 ----------------
-            if self.log_dir is not None:
-                self.log(locals())
             if self.log_dir is not None and (it % self.save_interval == 0):
                 self.save_model(it)
         self.current_learning_iteration += num_learning_iterations
@@ -328,7 +185,7 @@ class OffPolicyRunner:
         # DDPG 相关指标
         value_loss = critic_loss if critic_loss is not None else 0.0
         surrogate_loss = actor_loss if actor_loss is not None else 0.0
-        mean_noise = noise_std if noise_std is not None else self.alg.actor_critic.std.mean().item()
+        mean_noise = noise_std if noise_std is not None else self.alg.actor_critic.noise_std
         mean_reward = statistics.mean(locs['rewbuffer']) if len(locs['rewbuffer']) > 0 else 0.0
         mean_len = statistics.mean(locs['lenbuffer']) if len(locs['lenbuffer']) > 0 else 0.0
 
@@ -346,9 +203,69 @@ class OffPolicyRunner:
                 self.writer.add_scalar('Train/mean_reward/time', mean_reward, self.tot_time)
                 self.writer.add_scalar('Train/mean_episode_length/time', mean_len, self.tot_time)
 
+        # 控制台输出
+        str_info = f" \033[1m Learning iteration {locs['it']}/{locs['tot_iter']} \033[0m "
+        
+        if len(locs['rewbuffer']) > 0:
+            log_string = (f"""{'#' * width}\n"""
+                          f"""{str_info.center(width, ' ')}\n\n"""
+                          f"""{'Computation:':>{pad}} {fps:.0f} steps/s (collection: {locs['collection_time']:.3f}s, learning {locs['learn_time']:.3f}s)\n"""
+                          f"""{'Critic loss:':>{pad}} {value_loss:.4f}\n"""
+                          f"""{'Actor loss:':>{pad}} {surrogate_loss:.4f}\n"""
+                          f"""{'Noise std:':>{pad}} {mean_noise:.4f}\n"""
+                          f"""{'Mean reward:':>{pad}} {mean_reward:.2f}\n"""
+                          f"""{'Mean episode length:':>{pad}} {mean_len:.2f}\n""")
+        else:
+            log_string = (f"""{'#' * width}\n"""
+                          f"""{str_info.center(width, ' ')}\n\n"""
+                          f"""{'Computation:':>{pad}} {fps:.0f} steps/s (collection: {locs['collection_time']:.3f}s, learning {locs['learn_time']:.3f}s)\n"""
+                          f"""{'Critic loss:':>{pad}} {value_loss:.4f}\n"""
+                          f"""{'Actor loss:':>{pad}} {surrogate_loss:.4f}\n"""
+                          f"""{'Noise std:':>{pad}} {mean_noise:.4f}\n"""
+                          f"""{'Global steps:':>{pad}} {locs['global_step']}\n""")
+
+        log_string += ep_string
+        log_string += (f"""{'-' * width}\n"""
+                       f"""{'Total timesteps:':>{pad}} {self.tot_timesteps}\n"""
+                       f"""{'Iteration time:':>{pad}} {iteration_time:.2f}s\n"""
+                       f"""{'Total time:':>{pad}} {self.tot_time:.2f}s\n"""
+                       f"""{'ETA:':>{pad}} {self.tot_time / (locs['it'] + 1) * (locs['tot_iter'] - locs['it'] - 1):.1f}s\n""")
+        print(log_string)
+
 
     def get_inference_policy(self, device=None):
         self.alg.actor_critic.eval() # switch to evaluation mode (dropout for example)
         if device is not None:
             self.alg.actor_critic.to(device)
         return self.alg.actor_critic.act_inference
+
+    def save(self, path, infos=None):
+        """Save model and training state"""
+        torch.save({
+            'model_state_dict': self.actor_critic.state_dict(),
+            'actor_opt_state_dict': self.alg.actor_opt.state_dict(),
+            'critic_opt_state_dict': self.alg.critic_opt.state_dict(),
+            'iter': self.current_learning_iteration,
+            'infos': infos,
+        }, path)
+
+    def load(self, path, load_optimizer=True):
+        """Load model and training state"""
+        loaded_dict = torch.load(path, map_location=self.device)
+        
+        # 兼容不同的保存格式
+        if 'model_state_dict' in loaded_dict:
+            # 新格式：包含完整训练状态
+            self.actor_critic.load_state_dict(loaded_dict['model_state_dict'])
+            if load_optimizer:
+                if 'actor_opt_state_dict' in loaded_dict:
+                    self.alg.actor_opt.load_state_dict(loaded_dict['actor_opt_state_dict'])
+                if 'critic_opt_state_dict' in loaded_dict:
+                    self.alg.critic_opt.load_state_dict(loaded_dict['critic_opt_state_dict'])
+            if 'iter' in loaded_dict:
+                self.current_learning_iteration = loaded_dict['iter']
+            return loaded_dict.get('infos', None)
+        else:
+            # 旧格式：仅包含模型权重
+            self.actor_critic.load_state_dict(loaded_dict)
+            return None

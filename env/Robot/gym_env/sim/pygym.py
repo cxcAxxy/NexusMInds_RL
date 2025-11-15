@@ -13,6 +13,7 @@ import torch
 #后期，配置文件的参数，仿真的一些可视化参数。
 from ...utils import *
 
+
 # 这个args是需要从命令行当中进行一个读取，使用isaac gym的命令行读取
 class Gym():
     def __init__(self,args):
@@ -155,7 +156,6 @@ class Gym():
         self.gym.prepare_sim(self.sim)
         self.get_state_tensors()
 
-
     def get_state_tensors(self):
 
         self._rb_states = self.gym.acquire_rigid_body_state_tensor(self.sim)
@@ -163,6 +163,10 @@ class Gym():
 
         self._dof_states = self.gym.acquire_dof_state_tensor(self.sim)
         self.dof_states = gymtorch.wrap_tensor(self._dof_states)
+
+        self._contact_forces = self.gym.acquire_net_contact_force_tensor(self.sim)
+        self.contact_forces = gymtorch.wrap_tensor(self._contact_forces)
+
 
         # 拆分位置与速度分量
         self.dof_pos = self.dof_states[:, 0].view(self.num_envs, -1, 1)
@@ -194,8 +198,9 @@ class Gym():
         # Step the physics
         self.gym.simulate(self.sim)
         self.gym.fetch_results(self.sim, True)
+
         self.refresh()
-        # Step rendering (skip when headless)
+    # Step rendering (skip when headless)
         if not getattr(self.args, 'headless', False):
             self.gym.step_graphics(self.sim)
             self.gym.draw_viewer(self.viewer, self.sim, False)
@@ -210,6 +215,7 @@ class Gym():
         self.gym.refresh_dof_state_tensor(self.sim)
         self.gym.refresh_jacobian_tensors(self.sim)
         self.gym.refresh_mass_matrix_tensors(self.sim)
+        self.gym.refresh_net_contact_force_tensor(self.sim)
 
     def ee_pos_to_torque(self,pos_des,orn_des):
         # 由末端位置控制,由雅可比矩阵等计算出对应的力矩
@@ -233,10 +239,20 @@ class Gym():
         u = torch.transpose(self.j_eef, 1, 2) @ m_eef @ (kp * dpose).unsqueeze(-1) - kv * self.mm @ self.dof_vel
 
         return  u
-
+    
+    def get_collision_forces(self):
+        return self.contact_forces
+    
+    # ✅ 末端执行器碰撞力
+    def get_ee_collision_info(self):
+        self.refresh()
+        ee_collision_forces = self.contact_forces[self.ee_idxs, :3]
+        force_magnitudes = torch.norm(ee_collision_forces, dim=1)
+        return {'force_magnitudes':force_magnitudes}
+        
+    
     # ✅ 末端执行器位置
     def get_ee_position(self):
-
         ee_pos = self.rb_states[self.ee_idxs, :3]
         return ee_pos
 

@@ -36,12 +36,22 @@ class RobotCfg:
         self.control_type = "ee"      
         self.block_gripper = True 
         self.num_actions = 3            
+<<<<<<< HEAD
+        self.num_obs = 9
+        self.num_envs = 4 # 修改其他配置一致
+        self.control_type_sim = "effort"             
+
+        
+        # 模型路径与姿态
+        self.asset = "/home/gu/NexusMInds_RL/env/assets"
+=======
         self.num_obs = 6
         self.num_envs = 3 # 修改为与其他配置一致
         self.control_type_sim = "effort"             
 
         # 模型路径与姿态 - 修复资产路径
         self.asset = "/home/ymy/space_rl/NexusMInds_RL/env/assets"
+>>>>>>> c03adfa8c200a151ef24816d259ae50e8cf6965a
         self.robot_files = "urdf/franka_description/robots/franka_panda.urdf"
         # 每个机器人的初始位置是一样的吗
         self.base_pose = [0,0,0]  # 每个环境的机器人位置
@@ -63,7 +73,7 @@ class TaskCfg:
         self.num_envs = 3
 
         self.reward_type = "dense"
-        self.distance_threshold = 0.05
+        self.distance_threshold = 0.02
 
         self.goal_range = 1
         self.get_ee_position = None

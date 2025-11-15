@@ -62,12 +62,32 @@ class Reach_random_points(Task):
         """判断是否成功 (num_envs,)"""
         d = torch.norm(achieved_goal - desired_goal, dim=-1)
         return d < self.distance_threshold
+    
+    def check_ee_collision(self, force_threshold = 0.01):
+        collision_info = self.sim.get_ee_collision_info()
+        collision = collision_info['force_magnitudes'] > force_threshold
+        return {'collision_occurred': collision}
+    
+    def compute_collision_penalty(self):
+        """计算固定碰撞惩罚"""
+        collision_info = self.check_ee_collision()
+        fixed_penalty = -2.0
+        penalty = fixed_penalty * collision_info['collision_occurred'].float()
+        return penalty
 
     def compute_reward(self, achieved_goal: torch.Tensor, desired_goal: torch.Tensor) -> torch.Tensor:
         """计算奖励 (num_envs,)"""
         d = torch.norm(achieved_goal - desired_goal, dim=-1)
         if self.reward_type == "sparse":
-            return -(d > self.distance_threshold).float()
+            task_reward = -(d > self.distance_threshold).float()
         else:
-            return -d
+            task_reward = -d
+        
+        collision_penalty = self.compute_collision_penalty()
+        
+        total_reward = task_reward + collision_penalty
+
+
+
+        return total_reward
 

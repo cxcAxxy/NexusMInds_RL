@@ -1,5 +1,4 @@
 import numpy as np
-
 from ....core import Robot
 from ..sim.pygym import Gym
 import torch
@@ -35,7 +34,7 @@ class Franka(Robot):
 
         else:
             raise Exception("需要更新其他的控制方式")
-
+    
     def get_obs(self) -> torch.Tensor:
         # end-effector position and velocity
         ee_position = self.sim.get_ee_position()
@@ -104,3 +103,7 @@ class Franka(Robot):
         target_arm_angles = current_arm_joint_angles + arm_joint_ctrl
         return target_arm_angles
 
+    def check_ee_collision(self, force_threshold = 0.01):
+        collision_info = self.sim.get_ee_collision_info()
+        collision = collision_info['force_magnitudes'] > force_threshold
+        return {'collision_occurred': collision}

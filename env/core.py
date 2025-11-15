@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-
 # 这个是pytho内置模块abc，用来创建 抽象类和抽象方法,abstractmethod,用来标记子类必须实现的方法，子类如果没有实现这些方法，也不能实例化
 from typing import Any, Dict, Optional, Tuple
 import numpy as np
@@ -177,15 +176,21 @@ class RobotTaskEnv():
         # send timeout info to the algorithm
         self.extras["time_outs"]=self.time_out_buf
 
+        self.extras["time_outs"]=self.reset_buf
+
         # 重置buffer的变量
         self.rew_buf[env_ids]=0.
         self.episode_length_buf[env_ids]=0.
-        self.time_out_buf[env_ids]=0.
         self.reset_buf[env_ids]=1.
 
         # 清空该回合累计
         self.episode_sums[env_ids] = 0.
 
+<<<<<<< HEAD
+        # send timeout info to the algorithm
+
+=======
+>>>>>>> c03adfa8c200a151ef24816d259ae50e8cf6965a
 
     def reset(self):
         self.reset_idx(torch.arange(self.num_envs, device=self.device))
@@ -198,15 +203,19 @@ class RobotTaskEnv():
     def step(self, action: torch.Tensor):
         # 修改为 多环境的，dones,还有extras，对应就是内部的信息。
         # 确保动作在与仿真相同的设备上
+
         if action.device != self.device:
             action = action.to(self.device)
         action_sim = self.robot.step(action)
 
         # 这个地方设置 control.decimation。
+
         for _ in range(self.cfg.all.decimation):
             self.sim.step(action_sim, self.cfg.all.control_type_sim)
 
         # 更新的问题！！！！，这个更新放到仿真环境里面，就是robot的接口一定要是完全合适的。
+  
+
         self.post_physics_step()
 
 
@@ -228,6 +237,7 @@ class RobotTaskEnv():
 
     # 更新对应buffer数值。
 
+
     def check_termination(self):
         """ Check if environments need to be reset
         """
@@ -238,10 +248,22 @@ class RobotTaskEnv():
         #这个地方也不进行一个更新，判断条件后面再说，根据任务后续设定
 
         # 假设这个地方的判断：
-        self.reset_buf =0   # 后续根据碰撞进行修改，或者是其他的逻辑判断
-        self.time_out_buf = self.episode_length_buf > self.max_episode_length # no terminal reward for time-outs
-        self.reset_buf |= self.time_out_buf
+        # 后续根据碰撞进行修改，或者是其他的逻辑判断
+        self.reset_buf = 0
 
+        collision_info = self.robot.check_ee_collision()
+        collision_termination = collision_info['collision_occurred']
+
+        task_success = self.task.is_success(
+            self.task.get_achieved_goal(), 
+            self.task.get_goal()
+        )
+
+        self.time_out_buf = self.episode_length_buf > self.max_episode_length # no terminal reward for time-outs
+
+        self.reset_buf = self.time_out_buf | collision_termination | task_success
+    
+    
     def compute_reward(self):
         """ Compute rewards
             Calls each reward function which had a non-zero scale (processed in self._prepare_reward_function())
@@ -252,7 +274,7 @@ class RobotTaskEnv():
         # 累计到每回合和
         self.episode_sums += self.rew_buf
 
-    def _reward_termination(self):
+    def _reward_termination(self):#终止奖励
         # Terminal reward / penalty
         return self.reset_buf * ~self.time_out_buf
 

@@ -1,1 +1,1 @@
-from .train_cfg import rslCfgPPO, envCfg ,LeggedRobotCfgDDPG
+from .train_cfg import rslCfgPPO, envCfg

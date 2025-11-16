@@ -84,10 +84,12 @@ class Reach_random_points(Task):
             task_reward = -d
         
         collision_penalty = self.compute_collision_penalty()
+
+        success_bonus = 2.0
+        success = self.is_success(achieved_goal, desired_goal)
+        success_reward = success_bonus * success.float()
         
-        total_reward = task_reward + collision_penalty
-
-
+        total_reward = task_reward + collision_penalty + success_reward
 
         return total_reward
 

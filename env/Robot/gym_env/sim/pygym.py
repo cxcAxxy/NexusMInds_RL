@@ -64,6 +64,25 @@ class Gym():
         print("Loading asset '%s' from '%s'" % (urdf_file, asset_root))
         self.robot_asset = self.gym.load_asset(self.sim, asset_root, urdf_file, asset_options)
 
+    def create_table_asset(self):
+        # 创建模板
+        table_dims = gymapi.Vec3(0.6, 1.0, 0.1)
+        asset_options = gymapi.AssetOptions()
+        asset_options.fix_base_link = True
+        self.table_asset = self.gym.create_box(self.sim, table_dims.x, table_dims.y, table_dims.z, asset_options)
+
+    def create_box_asset(self):
+        box_size = 0.1
+        asset_options = gymapi.AssetOptions()
+        asset_options.fix_base_link = True
+        self.box_asset = self.gym.create_box(self.sim, box_size, box_size, box_size, asset_options)
+
+    def create_ball_asset(self):
+        radius = 0.025
+        asset_options = gymapi.AssetOptions()
+        asset_options.disable_gravity = True
+        self.ball_asset = self.gym.create_sphere(self.sim, radius, asset_options)
+
 
     #后面接入参数，设置pd参数等等
     def set_dof_states_and_propeties(self):
@@ -89,9 +108,40 @@ class Gym():
         pose.p =gymapi.Vec3(base_pos[0],base_pos[1],base_pos[2])
         pose.r=gymapi.Quat(base_orn[0],base_orn[1],base_orn[2],base_orn[3])
 
+        table_pose = gymapi.Transform()
+        table_pose.p = gymapi.Vec3(0.5, 0.0, 0.05)
+
+        box_poses = [
+            gymapi.Transform(),
+            gymapi.Transform(),
+            gymapi.Transform(),
+            gymapi.Transform(),
+            gymapi.Transform(),
+        ]
+        box_poses[0].p = gymapi.Vec3(table_pose.p.x + 0.15, table_pose.p.y + 0.2, 0.1 + 0.5 * 0.1)
+        box_poses[0].r = gymapi.Quat(0, 0, 2, 1)
+        box_poses[1].p = gymapi.Vec3(table_pose.p.x - 0.15, table_pose.p.y + 0.2, 0.1 + 0.5 * 0.1)
+        box_poses[1].r = gymapi.Quat(0, 0, 8, 1)
+        box_poses[2].p = gymapi.Vec3(table_pose.p.x + 0.15, table_pose.p.y - 0.2, 0.1 + 0.5 * 0.1)
+        box_poses[2].r = gymapi.Quat(0, 0, 5, 1)
+        box_poses[3].p = gymapi.Vec3(table_pose.p.x - 0.15, table_pose.p.y - 0.2, 0.1 + 0.5 * 0.1)
+        box_poses[3].r = gymapi.Quat(0, 0, 10, 1)
+
+     
+
+
         self.num_envs=num_envs
         self.envs=[]
+        self.table_handles=[]
+        self.table_idxs=[]
+        self.box_handles=[]
+        self.box_idxs=[]
+        self.ball_handles=[]
+        self.ball_idxs=[]
+        self.ee_handles=[]
         self.ee_idxs=[]
+        self.left_finger_idxs=[]
+        self.right_finger_idxs=[]
         self.init_pos_list=[]
         self.init_orn_list=[]
         
@@ -106,6 +156,26 @@ class Gym():
             env = self.gym.create_env(self.sim, env_lower, env_upper, self.num_per_row)
             self.envs.append(env)
 
+            ball_pose = self.generate_random_ball_pose()
+
+            table_handle = self.gym.create_actor(env, self.table_asset, table_pose, "table", i, 0)
+            self.table_handles.append(table_handle)
+            table_idx = self.gym.find_actor_rigid_body_index(env, table_handle, "table", gymapi.DOMAIN_SIM)
+            self.table_idxs.append(table_idx)
+            
+            for j, pose in enumerate(box_poses):
+                    box_handle = self.gym.create_actor(env, self.box_asset, pose, f"box_{i}_{j}", i, 0)
+                    self.box_handles.append(box_handle)
+                    box_idx = self.gym.get_actor_rigid_body_index(env, box_handle, 0, gymapi.DOMAIN_SIM)
+                    self.box_idxs.append(box_idx)
+
+            ball_handle = self.gym.create_actor(env, self.ball_asset, ball_pose, "ball", i, 1)
+            red_color = gymapi.Vec3(1.0, 0.0, 0.0)  
+            self.gym.set_rigid_body_color(env, ball_handle, 0, gymapi.MESH_VISUAL_AND_COLLISION, red_color)
+            self.ball_handles.append(ball_handle)
+            ball_idx = self.gym.get_actor_rigid_body_index(env, ball_handle, 0, gymapi.DOMAIN_SIM)
+            self.ball_idxs.append(ball_idx)
+
             # Add franka
             robot_handle = self.gym.create_actor(env, self.robot_asset, pose, "franka", i, 1)
 
@@ -117,9 +187,16 @@ class Gym():
 
             # Get inital ee pose
             ee_handle = self.gym.find_actor_rigid_body_handle(env, robot_handle, "panda_hand")
+            self.ee_handles.append(ee_handle)
             ee_pose = self.gym.get_rigid_transform(env, ee_handle)
             self.init_pos_list.append([ee_pose.p.x, ee_pose.p.y, ee_pose.p.z])
             self.init_orn_list.append([ee_pose.r.x, ee_pose.r.y, ee_pose.r.z, ee_pose.r.w])
+
+            left_finger_idx = self.gym.find_actor_rigid_body_index(env, robot_handle, "left_finger_joint", gymapi.DOMAIN_SIM)
+            self.left_finger_idxs.append(left_finger_idx)
+
+            right_finger_idx = self.gym.find_actor_rigid_body_index(env, robot_handle, "right_finger_joint", gymapi.DOMAIN_SIM)
+            self.right_finger_idxs.append(right_finger_idx)
 
             # Get global index of ee in rigid body state tensor
             ee_idx = self.gym.find_actor_rigid_body_index(env, robot_handle, "panda_hand", gymapi.DOMAIN_SIM)
@@ -138,6 +215,9 @@ class Gym():
     def pre_simulate(self,num_envs,asset_root,asset_file,base_pos,base_orn):
         self.create_plane()
         self.create_robot_asset(asset_file,asset_root)
+        self.create_table_asset()
+        self.create_box_asset()
+        self.create_ball_asset()
 
         # get joint limits and ranges for Franka
         self.robot_dof_props = self.gym.get_asset_dof_properties(self.robot_asset)
@@ -249,7 +329,12 @@ class Gym():
         ee_collision_forces = self.contact_forces[self.ee_idxs, :3]
         force_magnitudes = torch.norm(ee_collision_forces, dim=1)
         return {'force_magnitudes':force_magnitudes}
-        
+    
+    def get_finger_center_position(self):
+        left_finger_pos = self.rb_states[self.left_finger_idxs, :3]
+        right_finger_pos = self.rb_states[self.right_finger_idxs, :3]
+        center_pos = (left_finger_pos + right_finger_pos) / 2
+        return center_pos
     
     # ✅ 末端执行器位置
     def get_ee_position(self):
@@ -321,6 +406,19 @@ class Gym():
         for i in env_ids:
             actor_handle = self.gym.find_actor_handle(self.envs[i], name)
             self.gym.set_rigid_transform(self.envs[i], actor_handle, transform)
+
+    def generate_random_ball_pose(self):
+        ball_pose = gymapi.Transform()
+        x = random.uniform(0.3, 0.7)
+        y = random.uniform(-0.1, 0.1)
+        z = 0.3
+        ball_pose.p = gymapi.Vec3(x, y, z)
+        ball_pose.r = gymapi.Quat(0, 0, 0, 1)
+        return ball_pose
+    
+    def get_ball_positions(self):
+        ball_pose = self.rb_states[self.ball_idxs, :3]
+        return ball_pose
 
     def create_plane(self):
         plane_params = gymapi.PlaneParams()

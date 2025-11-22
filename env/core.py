@@ -279,7 +279,6 @@ class RobotTaskEnv():
         robot_buffer=self.robot.get_obs()
         task_buffer=self.task.get_obs()
         combined_buffer = torch.cat([robot_buffer, task_buffer], dim=1)
-
         self.obs_buf=combined_buffer
         self.desired_goal_buf=self.task.get_goal()
         self.achieved_goal_buf=self.task.get_achieved_goal()

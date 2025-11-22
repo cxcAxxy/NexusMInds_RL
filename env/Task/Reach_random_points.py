@@ -1,5 +1,5 @@
 from .utils import distance
-from typing import Any, Dict
+from typing import Any, Dict, List
 import torch
 from ..core import Task
 
@@ -42,7 +42,6 @@ class Reach_random_points(Task):
 
         goals = self._sample_goals(len(env_ids))
         self.goal[env_ids] = goals
-
 
         # # 固定目标位姿
         # self.goal[env_ids] = torch.tensor([0.5, 0.3, 0.25], device=self.device).unsqueeze(0).repeat(len(env_ids), 1)
